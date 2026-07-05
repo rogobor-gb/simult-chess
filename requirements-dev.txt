@@ -1,0 +1,7 @@
+# Development/toolchain dependencies for simult-chess (DEVELOPMENT.md Phase 0).
+# core/rules import only the standard library (DEVELOPMENT.md §0.6) — these are
+# for linting, type checking, and testing the package itself, not runtime deps.
+ruff
+mypy
+pytest
+hypothesis

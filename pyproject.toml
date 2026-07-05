@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simult-chess"
+version = "0.1.0"
+description = "A deterministic, zero-sum, two-player simultaneous-move chess variant."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+# Test-only cross-validator of hand-rolled geometry, UI board rendering (Phase 7),
+# and a future single-move suggestion oracle (Phase 9). Never imported by
+# simult_chess.core or simult_chess.rules (DEVELOPMENT.md §3.4). GPL-3.0-or-later,
+# kept as an optional extra so the copyleft obligation never attaches to the core.
+oracle = ["chess>=1.11.2"]
+dev = ["ruff", "mypy", "pytest", "hypothesis"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+packages = ["simult_chess"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

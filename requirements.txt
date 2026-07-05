@@ -1,0 +1,6 @@
+# Runtime dependencies for simult-chess.
+# The engine core (simult_chess.core, simult_chess.rules) is stdlib-only by
+# design (DEVELOPMENT.md §0.6, §3.4). This file is intentionally empty for now;
+# the `chess` library is an optional extra (test cross-validation / UI / oracle
+# only), declared under [project.optional-dependencies] in pyproject.toml, not
+# here.
