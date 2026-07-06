@@ -4,7 +4,7 @@ Each ordered resolution stage is a `Protocol`; v1's default implementation
 registers under the `RuleSet` value(s) it satisfies. A future variant lever
 (spec §13) becomes an alternative registration, not an edit to `phi.py`.
 More stage Protocols are added here incrementally as each stage's data
-structures are designed (fizzle and annihilation now; defense follows).
+structures are designed (fizzle, annihilation, and defense now).
 """
 
 from __future__ import annotations
@@ -18,9 +18,15 @@ from simult_chess.core.stages.annihilate import (
     Edge,
     resolve_annihilation,
 )
+from simult_chess.core.stages.defense import DefenseResult, resolve_defense
 from simult_chess.core.stages.fizzle import FizzleResult, resolve_fizzles
-from simult_chess.core.types import State
-from simult_chess.rules.ruleset import AnnihilationReading, FizzleScope, RuleSet
+from simult_chess.core.types import Reservation, Square, State
+from simult_chess.rules.ruleset import (
+    AnnihilationReading,
+    FizzleScope,
+    IntermezzoReading,
+    RuleSet,
+)
 
 
 class FizzleResolver(Protocol):
@@ -76,5 +82,41 @@ def get_annihilation_matcher(ruleset: RuleSet) -> AnnihilationMatcher:
         detail = (
             f"annihilation_reading={ruleset.annihilation_reading!r} has no "
             "registered Stage A implementation (spec §13.2: declined for v1)"
+        )
+        raise NotImplementedError(detail) from None
+
+
+class DefenseResolver(Protocol):
+    """Stage B: the capture/recapture cascade (spec §6.4)."""
+
+    def __call__(
+        self,
+        survivors: tuple[DeclaredMove, ...],
+        state: State,
+        reservations_white: tuple[Reservation, ...],
+        reservations_black: tuple[Reservation, ...],
+        ruleset: RuleSet,
+        *,
+        tie_break: Sequence[Square] | None = None,
+    ) -> DefenseResult: ...
+
+
+_DEFENSE_RESOLVERS: dict[IntermezzoReading, DefenseResolver] = {
+    "ii": resolve_defense,
+}
+
+
+def get_defense_resolver(ruleset: RuleSet) -> DefenseResolver:
+    """Look up the Stage B implementation registered for `ruleset`.
+
+    Only the v1 unconditional-precedence reading ("ii") is implemented; the
+    attacker-sequenced reading is a to-be-A/B-tested variant (spec §13.4).
+    """
+    try:
+        return _DEFENSE_RESOLVERS[ruleset.intermezzo_reading]
+    except KeyError:
+        detail = (
+            f"intermezzo_reading={ruleset.intermezzo_reading!r} has no "
+            "registered Stage B implementation (spec §13.4: not yet built)"
         )
         raise NotImplementedError(detail) from None

@@ -9,7 +9,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from simult_chess.core.types import CastleSide, Color, Square, State, Token, Trajectory
+from simult_chess.core.types import (
+    CastleSide,
+    Color,
+    PieceType,
+    Square,
+    State,
+    Token,
+    Trajectory,
+)
 
 _KNIGHT_DELTAS: tuple[tuple[int, int], ...] = (
     (1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2),
@@ -167,6 +175,49 @@ def _ray_trajectory_to(
     return Trajectory(path=tuple(path))
 
 
+def capturing_pattern_trajectory_at(
+    defender_type: PieceType,
+    defender_color: Color,
+    origin: Square,
+    target: Square,
+    occupant: OccupantLookup,
+) -> Trajectory | None:
+    """The trajectory a `defender_type`/`defender_color` piece at `origin`
+    needs to reach `target`, ignoring `target`'s own occupant (spec §4.3).
+
+    Parametrized over an explicit `occupant` view rather than a `State`, so
+    Stage B (spec §6.4) can re-run this fire-time check against its own
+    evolving occupancy as the capture/recapture cascade progresses — the
+    board `capturing_pattern_trajectory` reads is fixed at declaration, but
+    a defender's recapture path must be re-checked against the *current*
+    board (interior squares may have been vacated by other events).
+    """
+    if defender_type == "n":
+        delta = (target.file - origin.file, target.rank - origin.rank)
+        if delta in _KNIGHT_DELTAS:
+            return Trajectory(path=(origin, target), is_jump=True)
+        return None
+    if defender_type == "k":
+        delta = (target.file - origin.file, target.rank - origin.rank)
+        if delta in _KING_DELTAS:
+            return Trajectory(path=(origin, target))
+        return None
+    if defender_type == "p":
+        direction = _PAWN_DIRECTION[defender_color]
+        delta_rank = target.rank - origin.rank
+        delta_file = abs(target.file - origin.file)
+        if delta_rank == direction and delta_file == 1:
+            return Trajectory(path=(origin, target))
+        return None
+    if defender_type == "b":
+        return _ray_trajectory_to(occupant, origin, target, _BISHOP_DIRS)
+    if defender_type == "r":
+        return _ray_trajectory_to(occupant, origin, target, _ROOK_DIRS)
+    if defender_type == "q":
+        return _ray_trajectory_to(occupant, origin, target, _QUEEN_DIRS)
+    raise ValueError(f"unknown piece type {defender_type!r}")
+
+
 def capturing_pattern_trajectory(
     state: State, defender: Token, target: Square
 ) -> Trajectory | None:
@@ -181,30 +232,9 @@ def capturing_pattern_trajectory(
     """
     origin = state.board[defender]
     occupant = occupant_lookup(state.board)
-    if defender.typ == "n":
-        delta = (target.file - origin.file, target.rank - origin.rank)
-        if delta in _KNIGHT_DELTAS:
-            return Trajectory(path=(origin, target), is_jump=True)
-        return None
-    if defender.typ == "k":
-        delta = (target.file - origin.file, target.rank - origin.rank)
-        if delta in _KING_DELTAS:
-            return Trajectory(path=(origin, target))
-        return None
-    if defender.typ == "p":
-        direction = _PAWN_DIRECTION[defender.color]
-        delta_rank = target.rank - origin.rank
-        delta_file = abs(target.file - origin.file)
-        if delta_rank == direction and delta_file == 1:
-            return Trajectory(path=(origin, target))
-        return None
-    if defender.typ == "b":
-        return _ray_trajectory_to(occupant, origin, target, _BISHOP_DIRS)
-    if defender.typ == "r":
-        return _ray_trajectory_to(occupant, origin, target, _ROOK_DIRS)
-    if defender.typ == "q":
-        return _ray_trajectory_to(occupant, origin, target, _QUEEN_DIRS)
-    raise ValueError(f"unknown piece type {defender.typ!r}")
+    return capturing_pattern_trajectory_at(
+        defender.typ, defender.color, origin, target, occupant
+    )
 
 
 @dataclass(frozen=True, slots=True)
