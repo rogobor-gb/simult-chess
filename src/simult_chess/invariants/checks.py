@@ -10,9 +10,9 @@ transition checks compare a ``before``/``after`` pair.
 from __future__ import annotations
 
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
 
 from simult_chess.core.types import Color, State
+from simult_chess.core.violation import Violation
 from simult_chess.rules.ruleset import RuleSet
 
 _VALID_TYPES = frozenset({"p", "n", "b", "r", "q", "k"})
@@ -23,22 +23,6 @@ _CASTLING_FLANK_FIELDS = (
     "black_kingside",
     "black_queenside",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class Violation:
-    """A single failed invariant.
-
-    Parameters
-    ----------
-    invariant_id : str
-        The `INVARIANTS.md` ID, e.g. ``"WF1"``.
-    detail : str
-        Human-readable description of the offending witness.
-    """
-
-    invariant_id: str
-    detail: str
 
 
 def check_wf1_occupancy_injectivity(state: State) -> list[Violation]:
