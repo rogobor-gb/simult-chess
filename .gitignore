@@ -226,3 +226,6 @@ __marimo__/
 
 # Claude Code local settings (machine-specific; not shared)
 .claude/settings.local.json
+
+# Local-only project tracking (not shared with the team/repo)
+PROJECT_STATUS.md

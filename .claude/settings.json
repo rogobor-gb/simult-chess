@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Chess/bin/pytest *)",
+      "Bash(Chess/bin/mypy)",
+      "Bash(Chess/bin/mypy *)",
+      "Bash(Chess/bin/ruff check *)"
+    ]
+  }
+}
