@@ -147,10 +147,22 @@ class Reservation:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """Action :math:`\\mathrm{Move}(p,\\tau)`, spec §4.1."""
+    """Action :math:`\\mathrm{Move}(p,\\tau)`, spec §4.1.
+
+    Parameters
+    ----------
+    token : Token
+        The token to displace.
+    trajectory : Trajectory
+        Its declared trajectory.
+    promotion : PieceType | None
+        The declaration-time promotion choice, required iff `token` is a
+        pawn reaching the last rank (spec §6.5); otherwise must be `None`.
+    """
 
     token: Token
     trajectory: Trajectory
+    promotion: PieceType | None = None
 
 
 @dataclass(frozen=True, slots=True)

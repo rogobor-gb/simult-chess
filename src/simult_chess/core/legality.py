@@ -25,6 +25,9 @@ from simult_chess.core.types import (
 from simult_chess.core.violation import Violation
 from simult_chess.rules.ruleset import RuleSet
 
+_LAST_RANK = {Color.WHITE: 7, Color.BLACK: 0}
+_PROMOTABLE_TYPES = frozenset({"n", "b", "r", "q"})
+
 
 def king_token(state: State, color: Color) -> Token | None:
     """The live king token of `color`, if any."""
@@ -166,12 +169,37 @@ def check_l6_geometric_legality(
             ):
                 detail = f"action {index}: illegal move for token {action.token.id}"
                 violations.append(Violation("L6", detail))
+            reaches_last_rank = (
+                action.token.typ == "p"
+                and action.trajectory.destination.rank == _LAST_RANK[action.token.color]
+            )
+            if reaches_last_rank and action.promotion not in _PROMOTABLE_TYPES:
+                detail = f"action {index}: pawn reaching last rank must promote"
+                violations.append(Violation("L6", detail))
+            elif not reaches_last_rank and action.promotion is not None:
+                detail = f"action {index}: promotion declared without reaching last"
+                violations.append(Violation("L6", detail))
         elif isinstance(action, Reserve):
             if action.protege not in state.board or action.defender not in state.board:
                 detail = f"action {index}: reservation references a non-live token"
                 violations.append(Violation("L6", detail))
             else:
-                target = state.board[action.protege]
+                # The "aggressive dual" pattern (spec §4.3): if the protégé
+                # is itself moving this program, admissibility is judged
+                # against its declared *destination*, not its current square.
+                protege_move = next(
+                    (
+                        a
+                        for a in program
+                        if isinstance(a, Move) and a.token == action.protege
+                    ),
+                    None,
+                )
+                target = (
+                    protege_move.trajectory.destination
+                    if protege_move is not None
+                    else state.board[action.protege]
+                )
                 pattern = geometry.capturing_pattern_trajectory(
                     state, action.defender, target
                 )

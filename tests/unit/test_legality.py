@@ -179,6 +179,51 @@ def test_l6_rejects_cancel_of_unknown_reservation() -> None:
     assert len(violations) == 1
 
 
+def test_l6_pawn_reaching_last_rank_requires_promotion() -> None:
+    pawn = Token(id=1, color=Color.WHITE, typ="p")
+    state = build_state({pawn: Square(0, 6)})
+    move = Move(token=pawn, trajectory=Trajectory(path=(Square(0, 6), Square(0, 7))))
+    violations = legality.check_l6_geometric_legality(state, (move,), Color.WHITE)
+    assert len(violations) == 1
+
+
+def test_l6_accepts_pawn_promotion_on_last_rank() -> None:
+    pawn = Token(id=1, color=Color.WHITE, typ="p")
+    state = build_state({pawn: Square(0, 6)})
+    move = Move(
+        token=pawn,
+        trajectory=Trajectory(path=(Square(0, 6), Square(0, 7))),
+        promotion="q",
+    )
+    assert legality.check_l6_geometric_legality(state, (move,), Color.WHITE) == []
+
+
+def test_l6_rejects_promotion_declared_without_reaching_last_rank() -> None:
+    pawn = Token(id=1, color=Color.WHITE, typ="p")
+    state = build_state({pawn: Square(0, 1)})
+    move = Move(
+        token=pawn,
+        trajectory=Trajectory(path=(Square(0, 1), Square(0, 2))),
+        promotion="q",
+    )
+    violations = legality.check_l6_geometric_legality(state, (move,), Color.WHITE)
+    assert len(violations) == 1
+
+
+def test_l6_reservation_admissibility_uses_proteges_declared_destination() -> None:
+    # The "aggressive dual" pattern (spec §4.3): the king moves to f4 and a
+    # pawn on e3 defends it *there*, in the same program. Admissibility must
+    # use the king's declared destination, not its pre-move square.
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    pawn = Token(id=2, color=Color.WHITE, typ="p")
+    state = build_state({king: Square(4, 3), pawn: Square(4, 2)})  # e4, e3
+    program = (
+        _move(king, (Square(4, 3), Square(5, 3))),  # Kf4
+        Reserve(defender=pawn, protege=king),
+    )
+    assert legality.check_l6_geometric_legality(state, program, Color.WHITE) == []
+
+
 def test_check_legal_program_accepts_a_simple_legal_program() -> None:
     pawn = Token(id=1, color=Color.WHITE, typ="p")
     state = build_state({pawn: Square(4, 1)})
