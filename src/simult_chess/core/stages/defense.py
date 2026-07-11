@@ -225,6 +225,8 @@ def resolve_defense(
         return None
 
     def resolve_square(square: Square) -> None:
+        if square not in pending:
+            return  # tolerate tie_break entries that aren't contested squares
         if status.get(square) == "resolved":
             return
         status[square] = "resolving"
