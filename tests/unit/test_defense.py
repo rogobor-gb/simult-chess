@@ -58,7 +58,9 @@ def test_r7_worked_example_d4_e3_defense_holds() -> None:
         _dm(rook2, _line(Square(4, 7), E3), Color.BLACK, index=2),
     )
 
-    result = resolve_defense(survivors, state, reservations_white, (), RULESET)
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
 
     assert result.captured_tokens == {d4_pawn, rook1}
     assert result.survives(e3_pawn)
@@ -86,10 +88,10 @@ def test_m4_worked_example_is_independent_of_attacker_declaration_order() -> Non
     )
 
     result_ab = resolve_defense(
-        survivors, state, reservations_white, (), RULESET, tie_break=(D4, E3)
+        survivors, survivors, state, reservations_white, (), RULESET, tie_break=(D4, E3)
     )
     result_ba = resolve_defense(
-        survivors, state, reservations_white, (), RULESET, tie_break=(E3, D4)
+        survivors, survivors, state, reservations_white, (), RULESET, tie_break=(E3, D4)
     )
 
     assert result_ab.captured_tokens == result_ba.captured_tokens == {d4_pawn, rook1}
@@ -116,7 +118,9 @@ def test_r8_oldest_valid_reservation_fires_not_the_newer_one() -> None:
     )
     survivors = (_dm(attacker, _line(Square(3, 7), D4), Color.BLACK),)
 
-    result = resolve_defense(survivors, state, reservations_white, (), RULESET)
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
 
     assert len(result.fired) == 1
     assert result.fired[0].defender == older_defender
@@ -152,7 +156,7 @@ def test_r9_defender_fires_at_most_once_for_two_attacked_proteges() -> None:
     )
 
     result = resolve_defense(
-        survivors, state, reservations_white, (), RULESET, tie_break=(d2, b4)
+        survivors, survivors, state, reservations_white, (), RULESET, tie_break=(d2, b4)
     )
 
     assert len(result.fired) == 1
@@ -177,7 +181,9 @@ def test_r10_mover_as_defender_is_automatically_invalid() -> None:
         _dm(defender, (Square(0, 0), Square(0, 4)), Color.WHITE, index=1),
     )
 
-    result = resolve_defense(survivors, state, reservations_white, (), RULESET)
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
 
     assert result.fired == ()
     assert not result.survives(protege)
@@ -212,7 +218,9 @@ def test_r11_mutual_defense_cycle_resolves_to_base_semantics() -> None:
         _dm(attacker_q, _line(Square(7, 0), q_square), Color.BLACK, index=2),
     )
 
-    result = resolve_defense(survivors, state, reservations_white, (), RULESET)
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
 
     assert result.fired == ()
     assert result.captured_tokens == {p, q}
@@ -238,7 +246,7 @@ def test_r12_multi_level_chain_terminates_with_correct_final_holder() -> None:
     survivors = (_dm(rook, _line(Square(3, 7), D4), Color.BLACK),)
 
     result = resolve_defense(
-        survivors, state, reservations_white, reservations_black, RULESET
+        survivors, survivors, state, reservations_white, reservations_black, RULESET
     )
 
     assert result.captured_tokens == {d4_pawn, rook, e3_pawn}
@@ -256,9 +264,29 @@ def test_undefended_capture_stands_with_no_recapture() -> None:
     state = build_state({protege: D4, attacker: Square(3, 7)})
     survivors = (_dm(attacker, _line(Square(3, 7), D4), Color.BLACK),)
 
-    result = resolve_defense(survivors, state, (), (), RULESET)
+    result = resolve_defense(survivors, survivors, state, (), (), RULESET)
 
     assert result.fired == ()
     assert result.captured_tokens == {protege}
     assert result.survives(attacker)
     assert result.occupancy[attacker] == D4
+
+
+def test_r6_non_pawn_capture_of_a_vacated_square_is_not_a_capture() -> None:
+    # A knight leaves d4 the same phase a rook's declared trajectory ends
+    # there (d8-d4): the knight vacated, so the rook just arrives peacefully
+    # -- this must not be recorded as capturing the knight (R6, generalized
+    # past the pawn-only F1 fizzle).
+    knight = Token(id=1, color=Color.WHITE, typ="n")
+    rook = Token(id=2, color=Color.BLACK, typ="r")
+    state = build_state({knight: D4, rook: Square(3, 7)})
+    knight_move = _dm(knight, (D4, Square(1, 4)), Color.WHITE, index=1)
+    rook_move = _dm(rook, _line(Square(3, 7), D4), Color.BLACK, index=1)
+    executing = (knight_move, rook_move)
+
+    result = resolve_defense(executing, executing, state, (), (), RULESET)
+
+    assert result.fired == ()
+    assert result.captured_tokens == frozenset()
+    assert result.occupancy[knight] == Square(1, 4)
+    assert result.occupancy[rook] == D4

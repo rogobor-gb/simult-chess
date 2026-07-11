@@ -91,6 +91,7 @@ class DefenseResolver(Protocol):
 
     def __call__(
         self,
+        executing: tuple[DeclaredMove, ...],
         survivors: tuple[DeclaredMove, ...],
         state: State,
         reservations_white: tuple[Reservation, ...],

@@ -87,6 +87,7 @@ def _mutual_cycle_blacklist(
 
 
 def resolve_defense(
+    executing: tuple[DeclaredMove, ...],
     survivors: tuple[DeclaredMove, ...],
     state: State,
     reservations_white: tuple[Reservation, ...],
@@ -99,8 +100,15 @@ def resolve_defense(
 
     Parameters
     ----------
+    executing : tuple[DeclaredMove, ...]
+        :math:`M^\\ast`, Stage F's output (every move that wasn't fizzled),
+        needed to tell a genuinely *stationary* token apart from one that
+        vacated its origin and was then annihilated in Stage A — per spec
+        §3, a token vacates "whether or not it later dies en route," so an
+        annihilated mover's origin is never a valid capture target (the
+        vacated-square theorem, R6, generalized past pawns).
     survivors : tuple[DeclaredMove, ...]
-        The moves surviving Stage A.
+        The moves surviving Stage A (a subset of `executing`).
     state : State
         The declaration-time state (board, reservations already in effect,
         cooldown).
@@ -122,10 +130,12 @@ def resolve_defense(
         order invariance (inv M4).
     """
     moved_tokens = {move.token for move in survivors}
+    vacated_ids = {move.token.id for move in executing}
+
     occupancy: dict[Square, Token] = {
         square: token
         for token, square in state.board.items()
-        if token not in moved_tokens
+        if token.id not in vacated_ids
     }
     for move in survivors:
         occupancy[move.trajectory.destination] = move.token
@@ -139,7 +149,11 @@ def resolve_defense(
     for move in survivors:
         destination = move.trajectory.destination
         victim = declared_occupant(destination)
-        if victim is not None and victim.color != move.color:
+        if (
+            victim is not None
+            and victim.color != move.color
+            and victim.id not in vacated_ids
+        ):
             pending[destination] = (move.token, victim)
 
     victim_square: dict[Token, Square] = {
@@ -148,7 +162,11 @@ def resolve_defense(
 
     blacklisted = _mutual_cycle_blacklist(pending, victim_square, by_defender)
 
-    alive: set[Token] = set(state.board.keys())
+    survivor_ids = {token.id for token in moved_tokens}
+    annihilated_ids = vacated_ids - survivor_ids
+    alive: set[Token] = {
+        token for token in state.board if token.id not in annihilated_ids
+    }
     fired_defenders: set[Token] = set()
     captured_log: list[tuple[Token, Square]] = []
     fired_log: list[RecaptureFired] = []
