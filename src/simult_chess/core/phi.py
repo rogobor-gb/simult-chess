@@ -53,6 +53,7 @@ class PhiTrace:
     captured: tuple[tuple[Token, Square], ...]
     fired: tuple[RecaptureFired, ...]
     promoted: frozenset[int]
+    cancelled: frozenset[Reservation]
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,5 +234,6 @@ def phi(
         captured=defense_result.captured,
         fired=defense_result.fired,
         promoted=promoted_ids,
+        cancelled=cancellations,
     )
     return PhiResult(state=final_state, outcome=outcome, trace=trace)
