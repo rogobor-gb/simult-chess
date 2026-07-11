@@ -9,12 +9,13 @@ no wall-clock, no global mutable state, no unseeded randomness (inv M1).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from simult_chess.core import legality
 from simult_chess.core.moves import DeclaredMove, extract_declared_moves
 from simult_chess.core.stages import closure
-from simult_chess.core.stages.annihilate import AnnihilationEvent
+from simult_chess.core.stages.annihilate import AnnihilationEvent, Edge
 from simult_chess.core.stages.closure import Outcome
 from simult_chess.core.stages.defense import RecaptureFired
 from simult_chess.core.stages.fizzle import FizzleOutcome
@@ -109,8 +110,18 @@ def phi(
     program_white: Program,
     program_black: Program,
     ruleset: RuleSet,
+    *,
+    fizzle_tie_break: Sequence[DeclaredMove] | None = None,
+    annihilation_tie_break: Sequence[Edge] | None = None,
+    defense_tie_break: Sequence[Square] | None = None,
 ) -> PhiResult:
-    """Resolve one phase: :math:`\\Phi(s,\\pi_W,\\pi_B) \\to (s',\\text{trace})`."""
+    """Resolve one phase: :math:`\\Phi(s,\\pi_W,\\pi_B) \\to (s',\\text{trace})`.
+
+    The three `*_tie_break` parameters expose each stage's internal
+    processing-order hook (spec §3.2) for property testing (inv M2):
+    every stage's output is proven order-independent, so these must never
+    change the result — only the order in which it's computed.
+    """
     if not legality.is_legal_program(state, program_white, Color.WHITE, ruleset):
         raise ValueError("program_white violates L(s,π) (spec §4.4)")
     if not legality.is_legal_program(state, program_black, Color.BLACK, ruleset):
@@ -119,11 +130,15 @@ def phi(
     declared = extract_declared_moves(state, program_white, program_black)
 
     fizzle_resolver = registry.get_fizzle_resolver(ruleset)
-    fizzle_result = fizzle_resolver(declared, state, ruleset)
+    fizzle_result = fizzle_resolver(
+        declared, state, ruleset, tie_break=fizzle_tie_break
+    )
     executing = tuple(m for m in declared if fizzle_result.executes(m))
 
     annihilation_matcher = registry.get_annihilation_matcher(ruleset)
-    annihilation_result = annihilation_matcher(executing, ruleset)
+    annihilation_result = annihilation_matcher(
+        executing, ruleset, tie_break=annihilation_tie_break
+    )
     survivors = tuple(m for m in executing if annihilation_result.survives(m))
 
     new_reservations = _extract_new_reservations(
@@ -138,7 +153,13 @@ def phi(
 
     defense_resolver = registry.get_defense_resolver(ruleset)
     defense_result = defense_resolver(
-        executing, survivors, state, reservations_white, reservations_black, ruleset
+        executing,
+        survivors,
+        state,
+        reservations_white,
+        reservations_black,
+        ruleset,
+        tie_break=defense_tie_break,
     )
 
     promotion_choices = _extract_promotion_choices(program_white, program_black)
