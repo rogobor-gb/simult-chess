@@ -78,6 +78,7 @@ def mirror_action(action: Action) -> Action:
         return Move(
             token=mirror_token(action.token),
             trajectory=mirror_trajectory(action.trajectory),
+            promotion=action.promotion,
         )
     if isinstance(action, Reserve):
         return Reserve(
