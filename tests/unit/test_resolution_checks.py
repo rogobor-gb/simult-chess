@@ -278,3 +278,46 @@ def test_check_r1_catches_f1_fizzle_whose_target_never_moved() -> None:
 
     assert len(violations) == 1
     assert violations[0].invariant_id == "R1"
+
+
+def test_check_r16_allows_a_fizzled_token_that_separately_fired_as_defender() -> None:
+    # A token's own move can fizzle (F1) while it independently fires as a
+    # recapturing defender this same phase (R10 permits this: a fizzled
+    # move never displaces, so the token stays eligible to fire) -- R16
+    # must not flag the resulting displacement as "moved anyway".
+    token = Token(id=1, color=Color.BLACK, typ="p")
+    victim = Token(id=2, color=Color.WHITE, typ="n")
+    origin = Square(2, 6)
+    fired_square = Square(3, 5)
+    state_pre = build_state({token: origin, victim: Square(3, 6)})
+    state_post = build_state({token: fired_square, victim: Square(0, 0)})
+
+    fizzled_move = _dm(token, (origin, Square(3, 6)), Color.BLACK, 1)
+    outcome = FizzleOutcome(move=fizzled_move, cause="F1")
+    protege = Token(id=3, color=Color.BLACK, typ="b")
+    reservation = Reservation(defender=token, protege=protege, age=(0, 0))
+    fired = RecaptureFired(
+        defender=token, captured=victim, square=fired_square, reservation=reservation
+    )
+    trace = _empty_trace(fizzled=(outcome,), fired=(fired,))
+
+    violations = rc.check_r16_fizzled_inertness(state_pre, state_post, trace)
+
+    assert violations == []
+
+
+def test_check_r16_still_catches_a_genuinely_misplaced_fizzled_token() -> None:
+    token = Token(id=1, color=Color.BLACK, typ="p")
+    origin = Square(2, 6)
+    state_pre = build_state({token: origin})
+    # moved, but no `fired` entry to explain it
+    state_post = build_state({token: Square(3, 6)})
+
+    fizzled_move = _dm(token, (origin, Square(3, 6)), Color.BLACK, 1)
+    outcome = FizzleOutcome(move=fizzled_move, cause="F1")
+    trace = _empty_trace(fizzled=(outcome,))  # no `fired` entry for this token
+
+    violations = rc.check_r16_fizzled_inertness(state_pre, state_post, trace)
+
+    assert len(violations) == 1
+    assert violations[0].invariant_id == "R16"

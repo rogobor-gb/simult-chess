@@ -214,15 +214,26 @@ def check_r14_promotion(
 def check_r16_fizzled_inertness(
     state_pre: State, state_post: State, trace: PhiTrace
 ) -> list[Violation]:
-    """R16 — fizzled tokens stay on their origin and are never cooled."""
+    """R16 — a fizzled move itself leaves its token on the origin, uncooled.
+
+    This is a claim about *that move*, not a lifetime guarantee for the
+    token: a token whose own move fizzled is stationary, and a stationary,
+    uncooled token remains eligible to *separately* fire as a recapturing
+    defender this same phase (R10) — which legitimately displaces and
+    cools it. Only flag a fizzled token that neither moved on its own
+    (impossible, by definition) nor fired as a defender.
+    """
     violations: list[Violation] = []
     pre_by_id = {token.id: square for token, square in state_pre.board.items()}
     post_by_id = {
         token.id: (token, square) for token, square in state_post.board.items()
     }
     cooled_ids = {token.id for token in state_post.cooldown}
+    fired_defender_ids = {fired.defender.id for fired in trace.fired}
     for outcome in trace.fizzled:
         token_id = outcome.move.token.id
+        if token_id in fired_defender_ids:
+            continue  # legitimately displaced by firing, not by its own move
         pre_square = pre_by_id.get(token_id)
         post_entry = post_by_id.get(token_id)
         if pre_square is not None and post_entry is not None:
