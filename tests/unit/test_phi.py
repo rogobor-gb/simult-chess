@@ -15,6 +15,7 @@ from simult_chess.core.types import (
     Token,
     Trajectory,
 )
+from simult_chess.invariants.checks import check_all_state
 from simult_chess.rules.ruleset import RuleSet
 
 RULESET = RuleSet()
@@ -309,6 +310,38 @@ def test_aggressive_dual_reservation_persists_and_fires_next_phase() -> None:
     assert phase2.state.reservations_white == ()  # defender fired -> displaced
 
 
+def test_reservation_survives_promotion_with_a_refreshed_token_snapshot() -> None:
+    # A pawn promotes and, in the same program, a king declares a reservation
+    # defending it there (aggressive dual + promotion combined). The surviving
+    # reservation must reference the *promoted* token, not a stale pre-promotion
+    # snapshot -- otherwise WF6 referential integrity silently breaks (found by
+    # the Phase 6 self-play sweep).
+    black_pawn = Token(id=1, color=Color.BLACK, typ="p")
+    black_king = Token(id=2, color=Color.BLACK, typ="k")
+    white_king = Token(id=3, color=Color.WHITE, typ="k")
+    state = build_state(
+        {
+            black_pawn: Square(0, 1),  # a2
+            black_king: Square(1, 1),  # b2, adjacent to a1
+            white_king: Square(7, 7),
+        }
+    )
+    program_black = (
+        _move(black_pawn, (Square(0, 1), Square(0, 0)), promotion="q"),
+        Reserve(defender=black_king, protege=black_pawn),
+    )
+    program_white = (_move(white_king, (Square(7, 7), Square(7, 6))),)
+
+    result = phi(state, program_white, program_black, RULESET)
+
+    assert check_all_state(result.state, RULESET) == []
+    assert len(result.state.reservations_black) == 1
+    reservation = result.state.reservations_black[0]
+    assert reservation.protege.id == black_pawn.id
+    assert reservation.protege.typ == "q"
+    assert reservation.protege in result.state.board
+
+
 def test_promotion_does_not_apply_to_a_fizzled_capture() -> None:
     # A pawn's promoting diagonal capture can fizzle (F1: the target itself
     # executes a move this phase) -- the pawn then stays on its origin,
@@ -333,3 +366,8 @@ def test_promotion_does_not_apply_to_a_fizzled_capture() -> None:
 
     result = phi(state, program_white, program_black, RULESET)
 
+    board_by_id = {t.id: t for t in result.state.board}
+    pawn_after = board_by_id[pawn.id]
+    assert pawn_after.typ == "p"  # not promoted
+    assert result.state.board[pawn_after] == Square(0, 6)  # never left a7
+    assert pawn_after not in result.state.cooldown

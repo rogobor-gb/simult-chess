@@ -162,6 +162,31 @@ def update_reservations(
     return tuple(kept)
 
 
+def refresh_reservation_tokens(
+    reservations: tuple[Reservation, ...], final_board: Mapping[Token, Square]
+) -> tuple[Reservation, ...]:
+    """Re-point each kept reservation's defender/protégé at their *current*
+    Token snapshot (WF6).
+
+    A `Token` is a frozen, by-value snapshot (spec §1.1): promotion mutates
+    `typ` by minting a new snapshot with the same `id`. A reservation
+    surviving `update_reservations` still holds the *pre-promotion*
+    snapshot of any defender/protégé promoted this phase, which no longer
+    value-equals the live token of the same id — silently violating WF6's
+    referential integrity. Re-deriving from `final_board` by id keeps the
+    reservation pointed at whichever snapshot is actually live.
+    """
+    by_id = {token.id: token for token in final_board}
+    return tuple(
+        Reservation(
+            defender=by_id.get(r.defender.id, r.defender),
+            protege=by_id.get(r.protege.id, r.protege),
+            age=r.age,
+        )
+        for r in reservations
+    )
+
+
 def detect_terminal(board: Mapping[Token, Square]) -> Outcome:
     """T1 — king-capture terminal / synchronous draw (spec §10)."""
     has_white_king = any(t.typ == "k" and t.color is Color.WHITE for t in board)

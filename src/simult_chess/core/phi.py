@@ -199,11 +199,14 @@ def phi(
         cancellations,
         ruleset,
     )
+    refreshed_reservations = closure.refresh_reservation_tokens(
+        kept_reservations, final_board
+    )
     final_reservations_white = tuple(
-        r for r in kept_reservations if r.defender.color is Color.WHITE
+        r for r in refreshed_reservations if r.defender.color is Color.WHITE
     )
     final_reservations_black = tuple(
-        r for r in kept_reservations if r.defender.color is Color.BLACK
+        r for r in refreshed_reservations if r.defender.color is Color.BLACK
     )
 
     new_castling_rights = closure.update_castling_rights(
