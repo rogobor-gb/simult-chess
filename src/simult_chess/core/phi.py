@@ -162,7 +162,18 @@ def phi(
         tie_break=defense_tie_break,
     )
 
-    promotion_choices = _extract_promotion_choices(program_white, program_black)
+    declared_promotion_choices = _extract_promotion_choices(
+        program_white, program_black
+    )
+    executed_ids = {m.token.id for m in survivors}
+    # A promoting move can fizzle (F1: its target vacated) or be annihilated,
+    # leaving the pawn on its origin, not the last rank -- only a move that
+    # actually executed and survived Stage A promotes.
+    promotion_choices = {
+        token_id: piece_type
+        for token_id, piece_type in declared_promotion_choices.items()
+        if token_id in executed_ids
+    }
     final_board = closure.apply_promotions(defense_result.occupancy, promotion_choices)
     promoted_ids = frozenset(promotion_choices.keys())
 

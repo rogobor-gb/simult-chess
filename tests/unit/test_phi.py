@@ -307,3 +307,29 @@ def test_aggressive_dual_reservation_persists_and_fires_next_phase() -> None:
     assert black_rook.id not in board_ids2  # recaptured by the pawn
     assert phase2.state.board[board_ids2[pawn.id]] == Square(5, 3)
     assert phase2.state.reservations_white == ()  # defender fired -> displaced
+
+
+def test_promotion_does_not_apply_to_a_fizzled_capture() -> None:
+    # A pawn's promoting diagonal capture can fizzle (F1: the target itself
+    # executes a move this phase) -- the pawn then stays on its origin,
+    # unpromoted, uncooled. Found by the Phase 6 self-play sweep: promotion
+    # was being applied even when the declared move never executed.
+    pawn = Token(id=1, color=Color.WHITE, typ="p")
+    knight = Token(id=2, color=Color.BLACK, typ="n")
+    state = build_state(
+        {
+            WHITE_KING: Square(4, 0),
+            BLACK_KING: Square(4, 7),
+            pawn: Square(0, 6),  # a7
+            knight: Square(1, 7),  # b8
+        }
+    )
+    program_white = (_move(pawn, (Square(0, 6), Square(1, 7)), promotion="q"),)
+    knight_move = Move(
+        token=knight,
+        trajectory=Trajectory(path=(Square(1, 7), Square(3, 6)), is_jump=True),
+    )
+    program_black = (knight_move,)  # vacates b8
+
+    result = phi(state, program_white, program_black, RULESET)
+
