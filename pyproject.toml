@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "A deterministic, zero-sum, two-player simultaneous-move chess variant."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 dependencies = []
 
 [project.optional-dependencies]
-# Test-only cross-validator of hand-rolled geometry, UI board rendering (Phase 7),
-# and a future single-move suggestion oracle (Phase 9). Never imported by
-# simult_chess.core or simult_chess.rules (DEVELOPMENT.md §3.4). GPL-3.0-or-later,
-# kept as an optional extra so the copyleft obligation never attaches to the core.
+# Test-only cross-validator of hand-rolled geometry (Phase 9b) and UI board
+# rendering (Phase 7). Never imported by simult_chess.core or
+# simult_chess.rules (DEVELOPMENT.md §3.4). GPL-3.0-or-later, kept as an
+# optional extra so the copyleft obligation never attaches to the core.
 oracle = ["chess>=1.11.2"]
 dev = ["ruff", "mypy", "pytest", "hypothesis"]
 
@@ -36,3 +36,6 @@ packages = ["simult_chess"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: exhaustive/high-volume checks excluded from scripts/check.sh's fast gate",
+]
