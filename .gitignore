@@ -229,3 +229,10 @@ __marimo__/
 
 # Local-only project tracking (not shared with the team/repo)
 PROJECT_STATUS.md
+
+# Local-only dev tool: flattens the repo to an SMB share for Claude Desktop context
+scripts/flatten_project.py
+
+# Agent-facing development roadmap docs (local-only, not shared with the team/repo)
+docs/DEVELOPMENT.md
+docs/DEVELOPMENT_addendum_v1.1.md
