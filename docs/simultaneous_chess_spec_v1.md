@@ -1,6 +1,26 @@
-# Simultaneous Chess — Formal Specification, v1.0
+# Simultaneous Chess — Formal Specification, v1.1
 
 *(working title; the game is unnamed. This document is the ground-truth rule specification and is intended to become the reference against which the rules engine is validated.)*
+
+*Licensed under CC BY 4.0.*
+
+---
+
+## Changelog
+
+**v1.1 (2026-07-14).** Rulings record (maintainer decisions of 2026-07-14, binding;
+see `docs/DEVELOPMENT_addendum_v1.1.md` §A):
+
+- §9 cancellation resolved from **[OPEN]** to **[C, retained]** — `cancellation_enabled
+  = True` is the canonical v1 default; the irrevocable-defense alternative remains a
+  documented `RuleSet` variant (A1).
+- §6.2/§6.5/§13 pawn same-square fizzle scope confirmed **[C]**: fizzle iff *both*
+  movers are pawns; mixed pawn/non-pawn convergence is ordinary (V)-annihilation.
+  `pawn_same_square_fizzle_scope = "both_pawns"` canonical (A2).
+- §4.1/§4.4/§6.6 `Castle`'s actor set is extended to **{king, flank rook}** (was: king
+  only). Consequently L3 (INVARIANTS.md) rejects a program that castles *and*
+  separately declares an action for that same flank rook — this changes the legal-
+  program set relative to v1.0 (A3).
 
 ---
 
@@ -78,7 +98,10 @@ An action $\alpha$ is one of:
 
 1. $\mathrm{Move}(p,\tau)$ — displace token $p$ along trajectory $\tau$. Subsumes standard moves and standard captures (a capture is a move whose destination holds an enemy token at declaration; for pawns, captures are diagonal, pushes are straight).
 2. $\mathrm{Reserve}(D,Q)$ — register a reservation with defender token $D$ and protégé token $Q$ (§4.3).
-3. $\mathrm{Castle}(\text{side})$, side $\in\{\text{king},\text{queen}\}$ (§6.6).
+3. $\mathrm{Castle}(\text{side})$, side $\in\{\text{king},\text{queen}\}$ (§6.6). **Actor
+   set [C, v1.1]:** a `Castle` action's actors are **{king, flank rook}** (both
+   synchronized sub-movers of §6.6), not the king alone — so L3 (§4.4.3) rejects a
+   program that both castles and separately declares an action for that same rook.
 4. $\mathrm{Cancel}(\rho)$ — remove an active reservation $\rho\in R_\omega$ **[OPEN, default: retained]** (§9).
 
 ### 4.2 Move geometry (declaration-time legality)
@@ -102,7 +125,11 @@ $\pi_\omega=(\alpha_1,\dots,\alpha_k)$, an **ordered** tuple, is legal iff:
 
 1. **Budget.** $1\le k\le N$.
 2. **Mandatory displacement.** At least one $\alpha_i$ is a $\mathrm{Move}$ or $\mathrm{Castle}$. *(Passing is illegal; §9 explains why reservations alone would otherwise constitute a covert pass. Degenerate exception **[C]**: if $\omega$ has no geometrically legal displacement at all, a reservation-only or empty program is permitted for that phase — there is no stalemate to protect, and the no-progress counter handles abuse.)*
-3. **Distinct actors.** Each token appears in at most one action (no token both moves twice, nor moves and serves as the *fired* defender; but a token may move while *another* defends it).
+3. **Distinct actors.** Each token appears in at most one action's actor set (no token
+   both moves twice, nor moves and serves as the *fired* defender; but a token may
+   move while *another* defends it). A `Castle` action's actor set is **{king, flank
+   rook}** (§4.1) — a program may not castle and separately declare an action for
+   that same rook.
 4. **Cooldown respected.** No action's actor lies in $C$: a cooled token can neither move, castle, declare a reservation, nor fire one (§7).
 5. **Own-consistency.** The player's own executing moves are pairwise non-conflicting under (V)/(E) (§6.3) and none lands on a square occupied by the player's own stationary piece. *An internally-conflicting program is illegal, not self-annihilating.*
 6. **Geometric legality.** Each $\mathrm{Move}$ trajectory satisfies §4.2; each $\mathrm{Reserve}$ satisfies §4.3; each $\mathrm{Castle}$ satisfies §6.6; each $\mathrm{Cancel}$ names an $\rho\in R_\omega$.
@@ -203,7 +230,7 @@ Surviving, non-recaptured movers occupy their destinations. **Promotion** resolv
 
 ### 6.6 Castling
 
-$\mathrm{Castle}$ is a single action (one slot) contributing two synchronized sub-trajectories (king two squares, rook to the king's far side), each assessed independently under (V)/(E). A hit on the king component ends the game; a hit on the rook component kills the rook while the king completes. The king is never cooled; the **rook is cooled**. Classical "cannot castle through check" is *vacuous* here (no check exists), so castling legality reduces to the geometric/history conditions in $\eta$ (king and rook unmoved, squares between empty on $\beta$).
+$\mathrm{Castle}$ is a single action (one slot) contributing two synchronized sub-trajectories (king two squares, rook to the king's far side), each assessed independently under (V)/(E). A hit on the king component ends the game; a hit on the rook component kills the rook while the king completes. The king is never cooled; the **rook is cooled**. Classical "cannot castle through check" is *vacuous* here (no check exists), so castling legality reduces to the geometric/history conditions in $\eta$ (king and rook unmoved, squares between empty on $\beta$). **[C, v1.1]** Since both king and rook displace as part of this one action, both are its *actors* (§4.1) for the purposes of L3 — a program cannot castle and also separately move the same flank rook.
 
 ### 6.7 Stage D — phase closure
 
@@ -261,7 +288,11 @@ With $N=2$, per-player declarations scale as $\binom{b+d}{2}$ where $b\approx 35
 
 ---
 
-## 9. Cancellation of reservations **[OPEN — default: retained]**
+## 9. Cancellation of reservations **[C — retained, v1.1]**
+
+**Resolved (2026-07-14):** retained as the canonical v1 default; `cancellation_enabled
+= True`. The irrevocable-defense alternative (drop cancellation entirely) remains a
+documented, exercisable `RuleSet` variant, not a candidate to displace the default.
 
 Cancellation is *useless unless recapture is automatic* — and it is (the reservation is a genuine pre-commitment "if $Q$ is taken, $D$ *will* recapture"). Given automaticity, cancellation earns its keep in exactly one situation: the committed recapture has become **bad** (it would drag $D$ into a fork, or the exchange has turned unfavorable) and the player wants $D$ to stay put *without executing it*. Moving $D$ also cancels the reservation but costs a slot and relocates the piece; cancellation drops the commitment while $D$ stays. Because of simultaneity it is a **blind withdrawal** — committed in a decision phase before seeing whether the opponent triggers it — a Schelling-style deterrence/commitment lever (keep the reservation as a visible deterrent vs. withdraw to dodge a forced bad recapture). Under the mandatory-move rule (L2), cancellation cannot be abused as a covert pass, so v1 makes it **free and slot-less** (apply at closure, §6.7). *Alternative:* drop cancellation entirely, making the defense irrevocable and shrinking the state — coherent and simpler; the designer's call.
 
@@ -326,9 +357,11 @@ Multiple reservations are **core** to v1 (a loss of tempo traded for solidity). 
 - $H$: no-progress horizon (§10), a balance parameter controlling convertibility of material (§8.3). Placeholder $H=50$.
 - Recapture cooldown (§7): default **on**; candidate to switch off for faster play.
 
-**Conventions requiring a designer ruling / confirmation.**
-- **[OPEN]** Cancellation retained (default) vs. dropped for an irrevocable defense (§9).
-- **[C, confirm]** Pawn same-square fizzle triggers only when *both* movers are pawns (§6.2/6.5); the mixed pawn/non-pawn case is ordinary (V)-annihilation.
+**Conventions, resolved (rulings of 2026-07-14; see changelog).**
+- **[C, retained]** Cancellation retained as the v1 default (§9); irrevocable defense
+  remains a documented `RuleSet` variant.
+- **[C, confirmed]** Pawn same-square fizzle triggers only when *both* movers are pawns (§6.2/6.5); the mixed pawn/non-pawn case is ordinary (V)-annihilation.
+- **[C, v1.1]** `Castle`'s actor set is {king, flank rook} (§4.1, §4.4.3, §6.6).
 
 **Deferred variant levers (Ch.-length treatments to follow if adopted).**
 1. **Hidden information** (Ch. 11) — the intended second milestone.

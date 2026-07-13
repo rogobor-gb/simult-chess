@@ -1,4 +1,4 @@
-# Simultaneous Chess — Invariant Checklist, v1.0
+# Simultaneous Chess — Invariant Checklist, v1.1
 
 *Companion to `simultaneous_chess_spec_v1.md` (hereafter **spec**). This document is
 the ground-truth specification of the **validation harness**: the set of predicates
@@ -6,6 +6,15 @@ that must never be falsified by a correct implementation of the transition opera
 $\Phi$. It is written to be implemented directly — every invariant states a formal
 predicate, its spec anchor, the point in the pipeline at which it is checked, a
 severity, and (where relevant) the `RuleSet` parameter on which its truth depends.*
+
+*Licensed under CC BY 4.0.*
+
+**v1.1 (2026-07-14).** Rulings record (`docs/DEVELOPMENT_addendum_v1.1.md` §A, binding):
+L3's actor extraction for `Castle` now yields `{king, flank rook}` (A3, was king-only);
+`cancellation_enabled` and `pawn_same_square_fizzle_scope` move from `[OPEN]`/`[C,
+confirm]` to resolved `[C]` in §8 (A1, A2 — values unchanged, epistemic status only);
+M5's permanent scope is clarified to symmetric fixtures with restricted action supports
+(A8); M4's `[K]` branching is confirmed ahead of its Phase 11 exercise (A4).
 
 ---
 
@@ -59,12 +68,14 @@ Programs $\pi_\omega=(\alpha_1,\dots,\alpha_k)$; declared moves $M=M_\mathrm{W}\
 executing moves $M^\ast$ (spec §3). Swept set $\sigma(\tau)=\{q_1,\dots,q_\ell\}$
 (origin **excluded**), directed edges $\varepsilon(\tau)$ (spec §1.3).
 
-**Actor of an action** (used by `L-*`). For $\mathrm{Move}(p,\tau)$ and
-$\mathrm{Castle}$ the actor is the moved token (for castling, the king; the rook is a
-synchronized co-mover, spec §6.6); for $\mathrm{Reserve}(D,Q)$ the actor is the
-**defender** $D$; $\mathrm{Cancel}$ has no board actor. A **protégé $Q$ is not an
-actor** — hence a protégé may be cooled or moving (spec §4.3, §7: a cooled piece may
-be defended).
+**Actor(s) of an action** (used by `L-*`). For $\mathrm{Move}(p,\tau)$ the actor is
+the moved token $p$; for $\mathrm{Reserve}(D,Q)$ the actor is the **defender** $D$;
+$\mathrm{Cancel}$ has no board actor. **[C, v1.1, A3]** For $\mathrm{Castle}$ the
+actor **set** is **{king, flank rook}** — both synchronized sub-movers of spec §6.6
+are actors, not the king alone (v1.0 treated the rook as a mere co-mover; this was a
+gap, since it let a program castle and separately move the same rook without
+tripping L3). A **protégé $Q$ is not an actor** — hence a protégé may be cooled or
+moving (spec §4.3, §7: a cooled piece may be defended).
 
 **The color-swap involution $\chi$** (central to M3). Define the vertical rank
 reflection $\mu:(c,r)\mapsto(c,7-r)$ (files fixed) composed with color inversion.
@@ -188,7 +199,12 @@ no-legal-displacement predicate holds.
 **L3 — Distinct actors.** *(S2)*
 Each token is the actor of at most one action in $\pi_\omega$ (a token may *move* while
 *another* token defends it; a token may not move twice, nor both move and serve as the
-**fired** defender). *Ref.* §4.4.3, §4.3. *Check.* actor multiset has no repeats.
+**fired** defender). **[C, v1.1, A3]** A `Castle` action contributes **two** actors,
+`{king, flank_rook}` (§1's actor definition) — so a program that castles and also
+declares a separate action for that same rook (a second `Move`, or naming it as a
+`Reserve` defender) fails L3. *Ref.* §4.4.3, §4.3, spec §4.1/§6.6 (v1.1). *Check.*
+actor multiset — built from *every* action's full actor set, including both of
+`Castle`'s — has no repeats.
 
 **L4 — Cooldown respected.** *(S2)*
 No **actor** lies in $C$: a cooled token can neither move, castle, declare a
@@ -228,9 +244,12 @@ functional fizzle digraph; assert out-degree $\le 1$ and that all cycles are the
 Two **opposing pawn** moves declaring the same destination both fizzle; by the
 realizability lemma this occurs only as opposing **pushes** onto a shared empty
 square. After resolution both pawns remain on their origins, with no capture and no
-cooldown. **Scope [K]:** the same-square fizzle triggers only when *both* movers are
-pawns; a mixed pawn/non-pawn convergence onto one square is ordinary (V)-annihilation
-(R4), **not** a fizzle. *Ref.* §6.2 (F2), §6.5. **[K]** = `RuleSet.pawn_same_square_fizzle_scope` (v1: `both_pawns`).
+cooldown. **Scope [K, resolved A2]:** the same-square fizzle triggers only when *both*
+movers are pawns; a mixed pawn/non-pawn convergence onto one square is ordinary
+(V)-annihilation (R4), **not** a fizzle. *Ref.* §6.2 (F2), §6.5. **[K]** =
+`RuleSet.pawn_same_square_fizzle_scope` (v1: `both_pawns`, canonical since the 2026-07-14
+ruling — see changelog; the field's value was already the default, only its
+epistemic status changed from `[C, confirm]` to resolved `[C]`).
 
 **R3 — Edge-conflict mutual annihilation.** *(S2)*
 Any opposing pair with a shared edge in opposite orientation
@@ -338,8 +357,10 @@ unmoved and cooldown-free; slot budget still debited.
 $\mathrm{Cancel}(\rho)$ removes $\rho$ from $R_\omega$ at phase closure (§6.7), is
 **free and slot-less**, and is a blind pre-commitment (decided before observing whether
 the opponent would trigger it). *Ref.* §9, §6.7. *Check.* cancelled reservations absent
-from $R'_\omega$; no slot debited. **[K]** = `RuleSet.cancellation_enabled` (v1: `on`;
-if disabled, this invariant is void and $\mathrm{Cancel}$ must be rejected at L6).
+from $R'_\omega$; no slot debited. **[K, resolved A1]** = `RuleSet.cancellation_enabled`
+(v1: `on`, canonical since the 2026-07-14 ruling retaining cancellation — see
+changelog; if disabled, this invariant is void and $\mathrm{Cancel}$ must be rejected
+at L6).
 
 **R18 — Token conservation.** *(S0)*
 Across a phase, $\mathcal P^{\text{live}}$ is non-increasing; no dead token is
@@ -409,14 +430,23 @@ Reading (ii). *Ref.* §6.4 worked example, §12.1. *Check.* fix a defended fixtu
 the attacker's intra-program order over all $k!$ orderings; assert identical survivors.
 **[K]** contingent on `RuleSet.intermezzo_reading = (ii)`; under Reading `(i)` this
 invariant is *deliberately false* and must be replaced by the order-dependent
-specification of §13.4.
+specification of §13.4. **Confirmed ahead of exercise (A4):** this branch is the
+harness's contract for Phase 11a, which is the first place `intermezzo_reading = "i"`
+is actually driven through the registry and this invariant's `(i)`-branch fires for
+real; nothing here changes as a result of that exercise, since the branching
+language was already the intended reading.
 
 **M5 — Symmetric-position value antisymmetry.** *(S1, requires solver layer)*
 For a color-symmetric position $s=\chi(s)$, the one-phase stage game is symmetric, hence
 its value is $0$ and the payoff matrix satisfies $u^\ast(s,\pi,\pi')=-u^\ast(s,\chi\pi',\chi\pi)$.
 *Ref.* §8.1–8.2. *Check.* **only once the stage-matrix/value layer exists**; on symmetric
 fixtures assert matrix antisymmetry under $\chi$ and value $0$. Until then, keep as a
-documented target, not an active assertion.
+documented target, not an active assertion. **Scope, clarified (A8):** this is a
+*permanent* scope restriction, not a Phase 10 bootstrapping stopgap — M5 runs only on
+$\chi$-symmetric fixtures ($s=\chi(s)$: the standard start plus hand-built midgame
+positions) with $\chi$-closed action supports, never on arbitrary states drawn from a
+self-play sweep. Symmetry of the *fixture* is what makes the value-$0$ claim provable
+at all; a generic sweep state has no such guarantee.
 
 ---
 
@@ -436,10 +466,12 @@ parameter, never a literal.
 | `annihilation_reading` | `B` (priority pairing) | R4 | Alt: timed one-tick model (§13.2). |
 | `intermezzo_reading` | `(ii)` (unconditional) | R7, M4 | Alt: `(i)` attacker-sequenced (§13.4) — flips M4 from *true* to *deliberately order-dependent*. |
 
-**Two spec items still `[OPEN]` (do not hardcode against them):**
-`cancellation_enabled` (spec §9, default retained) and `pawn_same_square_fizzle_scope`
-(spec §13, `[C, confirm]`). The harness should surface both as explicit `RuleSet` fields
-so a designer ruling is a one-line change, not a code hunt.
+**Both spec items resolved 2026-07-14 (see changelog; not `[OPEN]` any more):**
+`cancellation_enabled` (spec §9, retained — A1) and `pawn_same_square_fizzle_scope`
+(spec §13, `both_pawns` confirmed — A2). Both fields' *values* were already the v1
+defaults before the ruling; only their epistemic status moved from `[OPEN]`/`[C,
+confirm]` to resolved `[C]`. They remain explicit `RuleSet` fields regardless, so a
+future re-ruling is still a one-line change, not a code hunt.
 
 ---
 

@@ -26,11 +26,14 @@ class RuleSet:
     recapture_cooldown : bool
         Whether a recapturer enters :math:`C'`. v1: ``True``. Couples: ``R13``.
     cancellation_enabled : bool
-        Whether ``Cancel`` is admissible. v1: ``True`` (spec §9 [OPEN]).
+        Whether ``Cancel`` is admissible. v1: ``True`` (spec §9, resolved
+        ``[C, retained]`` by the 2026-07-14 ruling A1 — value unchanged from
+        v1.0's default, only its epistemic status moved from ``[OPEN]``).
         Couples: ``R17``, ``L6``.
     pawn_same_square_fizzle_scope : FizzleScope
-        Scope of the same-square fizzle. v1: ``"both_pawns"`` (spec §13 [C,confirm]).
-        Couples: ``R2``.
+        Scope of the same-square fizzle. v1: ``"both_pawns"`` (spec §13,
+        confirmed ``[C]`` by the 2026-07-14 ruling A2 — value unchanged, only
+        its epistemic status moved from ``[C, confirm]``). Couples: ``R2``.
     annihilation_reading : AnnihilationReading
         Mid-path collision semantics. v1: ``"B"`` (declaration-priority pairing).
         Couples: ``R4``.

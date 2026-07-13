@@ -91,6 +91,119 @@ def test_l3_allows_move_while_another_token_defends_it() -> None:
     assert legality.check_l3_distinct_actors(state, program, Color.WHITE) == []
 
 
+def test_l3_rejects_castle_and_separate_move_of_the_castling_rook() -> None:
+    # v1.1 ruling A3: Castle's actor set is {king, flank rook}, not king alone.
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    kingside_rook = Token(id=2, color=Color.WHITE, typ="r")
+    queenside_rook = Token(id=3, color=Color.WHITE, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 0),
+            kingside_rook: Square(7, 0),
+            queenside_rook: Square(0, 0),
+        }
+    )
+    program = (
+        Castle(side="king"),
+        _move(kingside_rook, (Square(7, 0), Square(7, 3))),
+    )
+    violations = legality.check_l3_distinct_actors(state, program, Color.WHITE)
+    assert len(violations) == 1
+
+
+def test_l3_allows_castle_and_move_of_the_other_rook() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    kingside_rook = Token(id=2, color=Color.WHITE, typ="r")
+    queenside_rook = Token(id=3, color=Color.WHITE, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 0),
+            kingside_rook: Square(7, 0),
+            queenside_rook: Square(0, 0),
+        }
+    )
+    program = (
+        Castle(side="king"),
+        _move(queenside_rook, (Square(0, 0), Square(0, 3))),
+    )
+    assert legality.check_l3_distinct_actors(state, program, Color.WHITE) == []
+
+
+def test_l3_rejects_queenside_castle_and_separate_move_of_that_rook() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    kingside_rook = Token(id=2, color=Color.WHITE, typ="r")
+    queenside_rook = Token(id=3, color=Color.WHITE, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 0),
+            kingside_rook: Square(7, 0),
+            queenside_rook: Square(0, 0),
+        }
+    )
+    program = (
+        Castle(side="queen"),
+        _move(queenside_rook, (Square(0, 0), Square(0, 3))),
+    )
+    violations = legality.check_l3_distinct_actors(state, program, Color.WHITE)
+    assert len(violations) == 1
+
+
+def test_l3_allows_queenside_castle_and_move_of_the_other_rook() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    kingside_rook = Token(id=2, color=Color.WHITE, typ="r")
+    queenside_rook = Token(id=3, color=Color.WHITE, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 0),
+            kingside_rook: Square(7, 0),
+            queenside_rook: Square(0, 0),
+        }
+    )
+    program = (
+        Castle(side="queen"),
+        _move(kingside_rook, (Square(7, 0), Square(7, 3))),
+    )
+    assert legality.check_l3_distinct_actors(state, program, Color.WHITE) == []
+
+
+def test_l3_rejects_castle_and_separate_move_of_the_castling_rook_chi_mirror() -> None:
+    # χ-mirrored image (INVARIANTS.md M3) of the kingside case: Black, rank 7.
+    king = Token(id=1, color=Color.BLACK, typ="k")
+    kingside_rook = Token(id=2, color=Color.BLACK, typ="r")
+    queenside_rook = Token(id=3, color=Color.BLACK, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 7),
+            kingside_rook: Square(7, 7),
+            queenside_rook: Square(0, 7),
+        }
+    )
+    program = (
+        Castle(side="king"),
+        _move(kingside_rook, (Square(7, 7), Square(7, 4))),
+    )
+    violations = legality.check_l3_distinct_actors(state, program, Color.BLACK)
+    assert len(violations) == 1
+
+
+def test_l3_allows_castle_and_move_of_the_other_rook_chi_mirror() -> None:
+    king = Token(id=1, color=Color.BLACK, typ="k")
+    kingside_rook = Token(id=2, color=Color.BLACK, typ="r")
+    queenside_rook = Token(id=3, color=Color.BLACK, typ="r")
+    state = build_state(
+        {
+            king: Square(4, 7),
+            kingside_rook: Square(7, 7),
+            queenside_rook: Square(0, 7),
+        }
+    )
+    program = (
+        Castle(side="king"),
+        _move(queenside_rook, (Square(0, 7), Square(0, 4))),
+    )
+    assert legality.check_l3_distinct_actors(state, program, Color.BLACK) == []
+
+
 def test_l4_rejects_cooled_actor() -> None:
     pawn = Token(id=1, color=Color.WHITE, typ="p")
     knight = Token(id=2, color=Color.WHITE, typ="n")

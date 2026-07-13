@@ -3,6 +3,11 @@
 Every check here runs against the declaration-time board only — no
 look-ahead, matching spec §4.2's "simultaneity is handled entirely by Φ,
 never by look-ahead in declaration."
+
+L3 (`check_l3_distinct_actors`) implements the v1.1 ruling A3: a `Castle`
+action's actor set is `{king, flank_rook}` (spec §4.1/§6.6), not the king
+alone, so it now catches a program that castles and also separately
+declares an action for that same rook.
 """
 
 from __future__ import annotations
@@ -37,17 +42,23 @@ def king_token(state: State, color: Color) -> Token | None:
     return None
 
 
-def actor_of(action: Action, color: Color, state: State) -> Token | None:
-    """The action's actor (INVARIANTS.md §1): mover for Move, king for Castle,
-    defender for Reserve, `None` (no board actor) for Cancel."""
+def actors_of(action: Action, color: Color, state: State) -> tuple[Token, ...]:
+    """The action's actor set (INVARIANTS.md §1, spec §4.1/§4.4.3/§6.6): the mover
+    for Move; defender for Reserve; ``{king, flank_rook}`` for Castle (both
+    synchronized sub-movers are actors, per the v1.1 ruling A3 — not the king
+    alone); empty (no board actor) for Cancel."""
     if isinstance(action, Move):
-        return action.token
+        return (action.token,)
     if isinstance(action, Reserve):
-        return action.defender
+        return (action.defender,)
     if isinstance(action, Castle):
-        return king_token(state, color)
+        castle = geometry.castle_move(state, color, action.side)
+        if castle is None:
+            king = king_token(state, color)
+            return (king,) if king is not None else ()
+        return (castle.king_token, castle.rook_token)
     if isinstance(action, Cancel):
-        return None
+        return ()
     raise TypeError(f"unknown action {action!r}")
 
 
@@ -85,11 +96,14 @@ def check_l2_mandatory_displacement(
 def check_l3_distinct_actors(
     state: State, program: Program, color: Color
 ) -> list[Violation]:
-    """L3 — each token is the actor of at most one action."""
+    """L3 — each token is the actor of at most one action. A `Castle`
+    contributes two actors, `{king, flank_rook}` (spec v1.1, A3), so a program
+    that castles and also separately declares an action for that same rook
+    fails here."""
     actor_ids = [
         actor.id
         for action in program
-        if (actor := actor_of(action, color, state)) is not None
+        for actor in actors_of(action, color, state)
     ]
     if len(set(actor_ids)) == len(actor_ids):
         return []
@@ -102,9 +116,9 @@ def check_l4_cooldown_respected(
     """L4 — no actor lies in the cooldown set C."""
     violations: list[Violation] = []
     for action in program:
-        actor = actor_of(action, color, state)
-        if actor is not None and actor in state.cooldown:
-            violations.append(Violation("L4", f"actor {actor.id} is cooled"))
+        for actor in actors_of(action, color, state):
+            if actor in state.cooldown:
+                violations.append(Violation("L4", f"actor {actor.id} is cooled"))
     return violations
 
 
