@@ -17,6 +17,10 @@ dependencies = []
 # simult_chess.rules (DEVELOPMENT.md §3.4). GPL-3.0-or-later, kept as an
 # optional extra so the copyleft obligation never attaches to the core.
 oracle = ["chess>=1.11.2"]
+# Stage-matrix/LP solver layer (Phase 10, ruling A7). Quarantined behind this
+# extra, same pattern as `oracle`'s `chess` dependency, so core/rules stay
+# standard-library only; only simult_chess.solver may import numpy/scipy.
+solver = ["numpy>=1.26", "scipy>=1.11"]
 dev = ["ruff", "mypy", "pytest", "hypothesis"]
 
 [tool.setuptools.packages.find]
@@ -33,6 +37,12 @@ select = ["E", "F", "I", "UP", "B"]
 strict = true
 mypy_path = "src"
 packages = ["simult_chess"]
+
+[[tool.mypy.overrides]]
+# scipy ships partial/no inline type information; numpy is fully typed and
+# needs no override. Solver-only (A7) -- core/rules never import either.
+module = "scipy.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
