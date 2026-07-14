@@ -6,7 +6,15 @@
       "Bash(Chess/bin/mypy *)",
       "Bash(Chess/bin/ruff check *)",
       "Bash(cat *)",
-      "Bash(git apply *)"
+      "Bash(git apply *)",
+      "Bash(ruff check *)",
+      "Bash(mypy)",
+      "Bash(mypy *)",
+      "Bash(pytest *)",
+      "Bash(python -m pytest *)",
+      "Bash(python -m simult_chess.ui.cli *)",
+      "Bash(python -m simult_chess.net.cli *)",
+      "Bash(pip install *)"
     ]
   }
 }
