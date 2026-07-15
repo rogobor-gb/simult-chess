@@ -22,6 +22,10 @@ pip install -e ".[dev]"
 # + geometry cross-validation against python-chess (test-only; GPL-3.0-or-later,
 # quarantined behind this extra so the license never attaches to core/rules)
 pip install -e ".[oracle]"
+
+# + the stage-matrix/LP solver layer and its matrix_1ply agent (numpy, scipy;
+# quarantined behind this extra so core/rules stay standard-library only)
+pip install -e ".[solver]"
 ```
 
 Requires Python ≥3.10.
@@ -86,7 +90,8 @@ src/simult_chess/
 ├── agents/      # Agent protocol + random_legal, greedy
 ├── harness/     # seeded self-play sweeps, violation reports
 ├── ui/          # notation DSL, ASCII board render, hot-seat/human-vs-agent sessions
-└── net/         # commit-reveal protocol, asyncio TCP transport, online session
+├── net/         # commit-reveal protocol, asyncio TCP transport, online session
+└── solver/      # stage-matrix/LP layer (needs the solver extra): matrix_1ply
 
 docs/
 ├── simultaneous_chess_spec_v1.md   # ground-truth rule specification (spec)
