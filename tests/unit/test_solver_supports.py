@@ -55,6 +55,23 @@ def test_enumerate_support_includes_two_action_programs_when_legal() -> None:
     assert any(len(program) == 2 for program in support)
 
 
+def test_enumerate_support_never_empty_when_a_displacement_exists() -> None:
+    # Regression: pure capture-value sorting could truncate the pool down to
+    # zero Move/Castle candidates (every survivor a same-value Reserve action
+    # that happened to win the shuffled tie-break), making every resulting
+    # program fail L2 -- found via a 500-game minimatch sweep (4 games hit it
+    # at the default max_single_actions=8). A tiny cap makes the failure mode
+    # far more likely, so stress it across many seeds here.
+    state = standard_starting_state()
+    for seed in range(200):
+        support = enumerate_support(
+            state, Color.WHITE, RULESET, random.Random(seed), max_single_actions=2
+        )
+        assert support, f"seed {seed}: empty support despite a legal displacement"
+        for program in support:
+            assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+
+
 def test_enumerate_support_handles_a_sparse_board() -> None:
     king = Token(id=1, color=Color.WHITE, typ="k")
     state = build_state({king: Square(4, 0)})
