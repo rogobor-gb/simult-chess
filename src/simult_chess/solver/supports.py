@@ -14,7 +14,15 @@ import random
 
 from simult_chess.agents.candidates import move_candidates, reserve_candidates
 from simult_chess.core import geometry, legality
-from simult_chess.core.types import Action, Color, Move, PieceType, Program, State
+from simult_chess.core.types import (
+    Action,
+    Castle,
+    Color,
+    Move,
+    PieceType,
+    Program,
+    State,
+)
 from simult_chess.rules.ruleset import RuleSet
 
 _PIECE_VALUES: dict[PieceType, int] = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
@@ -56,31 +64,46 @@ def enumerate_support(
     §4.3's reservation age both depend on it, so both orderings of a pair
     are kept as distinct candidate programs when both are legal). The
     result is capped at `max_programs` by seeded sampling. Always includes
-    at least one program if `color` has any legal action at all.
+    at least one program if `color` has any legal action at all: L2 (spec
+    §4.4.2) requires a program to contain a Move/Castle whenever one is
+    available, so if pure value-ranking would otherwise truncate the pool
+    down to zero of them (every survivor a same-value Reserve), the single
+    best Move/Castle candidate is swapped back in.
     """
-    pool: list[Action] = [
-        *move_candidates(state, color, rng),
-        *reserve_candidates(state, color),
-    ]
+    movers = move_candidates(state, color, rng)
+    pool: list[Action] = [*movers, *reserve_candidates(state, color)]
     rng.shuffle(pool)
     pool.sort(key=lambda action: _capture_value(state, color, action), reverse=True)
     pool = pool[:max_single_actions]
 
-    programs: set[Program] = set()
+    if movers and not any(isinstance(action, Move | Castle) for action in pool):
+        pool[-1] = movers[0]
+
+    # A plain set/list(set) round trip would make iteration order depend on
+    # Python's per-process hash randomization (PYTHONHASHSEED) for these
+    # dataclass-valued candidates -- silently breaking cross-process
+    # reproducibility despite a fixed `rng` seed (inv M1: Φ, and everything
+    # feeding it, must be a pure function of its seeds). A `seen` set is
+    # only ever used for O(1) membership testing, never iterated, so the
+    # insertion-ordered `programs` list is what actually determines output.
+    programs: list[Program] = []
+    seen: set[Program] = set()
+
+    def _add(candidate: Program) -> None:
+        if candidate not in seen and legality.is_legal_program(
+            state, candidate, color, ruleset
+        ):
+            seen.add(candidate)
+            programs.append(candidate)
+
     for action in pool:
-        single: Program = (action,)
-        if legality.is_legal_program(state, single, color, ruleset):
-            programs.add(single)
+        _add((action,))
 
     if ruleset.n_actions >= 2:
         for i, first in enumerate(pool):
             for j, second in enumerate(pool):
-                if i == j:
-                    continue
-                pair: Program = (first, second)
-                if legality.is_legal_program(state, pair, color, ruleset):
-                    programs.add(pair)
+                if i != j:
+                    _add((first, second))
 
-    support = list(programs)
-    rng.shuffle(support)
-    return tuple(support[:max_programs])
+    rng.shuffle(programs)
+    return tuple(programs[:max_programs])
