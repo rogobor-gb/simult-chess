@@ -47,10 +47,14 @@ class DefenseResult:
         return token not in self.captured_tokens
 
 
-def _build_reservation_indices(
+def build_reservation_indices(
     reservations_white: tuple[Reservation, ...],
     reservations_black: tuple[Reservation, ...],
 ) -> tuple[dict[Token, list[Reservation]], dict[Token, list[Reservation]]]:
+    """`by_protege` (age-sorted) and `by_defender` lookups over both colors'
+    reservations. Shared by every Stage B reading — defense_seq.py (Reading
+    (i), spec §13.4) imports this too, since the reservation *structure* is
+    reading-agnostic; only its resolution order differs."""
     by_protege: dict[Token, list[Reservation]] = {}
     by_defender: dict[Token, list[Reservation]] = {}
     for reservation in (*reservations_white, *reservations_black):
@@ -61,7 +65,7 @@ def _build_reservation_indices(
     return by_protege, by_defender
 
 
-def _mutual_cycle_blacklist(
+def mutual_cycle_blacklist(
     pending: dict[Square, tuple[Token, Token]],
     victim_square: dict[Token, Square],
     by_defender: dict[Token, list[Reservation]],
@@ -71,7 +75,10 @@ def _mutual_cycle_blacklist(
     The spec's own tie-break is base semantics on the cycle: neither
     reservation fires. This is the *only* cycle shape the precedence
     relation can exhibit (Lemma 6.4a's proof), so a direct pairwise scan
-    suffices — no general graph search is needed.
+    suffices — no general graph search is needed. Reading-agnostic (spec
+    §13.4 carries the same tie-break unchanged): under Reading (i) a true
+    2-cycle can only arise within a single tied round, but the shape and
+    resolution are identical, so defense_seq.py imports this too.
     """
     blacklisted: set[int] = set()
     for _square, (_attacker, victim) in pending.items():
@@ -141,7 +148,7 @@ def resolve_defense(
         occupancy[move.trajectory.destination] = move.token
 
     declared_occupant = geometry.occupant_lookup(state.board)
-    by_protege, by_defender = _build_reservation_indices(
+    by_protege, by_defender = build_reservation_indices(
         reservations_white, reservations_black
     )
 
@@ -160,7 +167,7 @@ def resolve_defense(
         victim: square for square, (_attacker, victim) in pending.items()
     }
 
-    blacklisted = _mutual_cycle_blacklist(pending, victim_square, by_defender)
+    blacklisted = mutual_cycle_blacklist(pending, victim_square, by_defender)
 
     survivor_ids = {token.id for token in moved_tokens}
     annihilated_ids = vacated_ids - survivor_ids
