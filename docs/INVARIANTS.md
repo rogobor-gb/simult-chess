@@ -16,6 +16,12 @@ confirm]` to resolved `[C]` in §8 (A1, A2 — values unchanged, epistemic statu
 M5's permanent scope is clarified to symmetric fixtures with restricted action supports
 (A8); M4's `[K]` branching is confirmed ahead of its Phase 11 exercise (A4).
 
+**Phase 11a (2026-07-17).** M4's `(i)`-branch is now the landed specification (spec
+§13.4) rather than a forward reference: order-dependence is validity-of-reservation
+conditioned on the defender surviving to its own declared round. R7's prose narrowed
+to distinguish what it actually checks (defender-origin-vacated, both readings) from
+what it does not (order-invariance, `(ii)` only — that is M4's job).
+
 ---
 
 ## 0. How to read and run this checklist
@@ -283,15 +289,21 @@ wrongly includes origins.
 **R7 — Intermezzo unconditional precedence.** *(S2, [K])*
 When a stationary $V$ holding a valid reservation $(D,V,a)$ is captured by $\alpha$,
 $D$ recaptures on $x=\beta(V)$, and any **same-phase** capture of $D$ at $\beta(D)$
-**misses** (the fired recapture vacates $\beta(D)$ first), *independent of declaration
-order*. A **fired defender is never captured at its origin in the same phase**. A
-reservation is valid at fire time iff $D$ is alive, on $\beta(D)$, $\notin C$, and the
-recapture trajectory is unobstructed on the current board.
-*Ref.* §6.4, Lemma 6.4b, §12.1. *Check.* on the precedence DAG, assert: (i) every fired
-defender's origin is vacated before any capture targeting it resolves; (ii) the
-terminal survivor set is invariant to the attacker's action ordering (delegate to M4).
+**misses** (the fired recapture vacates $\beta(D)$ first). Under Reading `(ii)` this
+holds *independent of declaration order*; under Reading `(i)` it still holds, but only
+*conditional on* $D$ not having already been captured by an earlier-declared attacker
+action (§13.4) — either way, **a fired defender is never captured at its origin in the
+same phase**, which is the part this invariant actually checks. A reservation is valid
+at fire time iff $D$ is alive, on $\beta(D)$, $\notin C$, and the recapture trajectory
+is unobstructed on the current board.
+*Ref.* §6.4, Lemma 6.4b, §12.1, §13.4. *Check.* on the resolution order (the precedence
+DAG under `(ii)`, the declared-index rounds under `(i)`), assert: (i) every fired
+defender's origin is vacated before any capture targeting it resolves — this holds
+under **both** readings; (ii) **under `(ii)` only**, the terminal survivor set is
+invariant to the attacker's action ordering (delegate to M4) — under `(i)` this is
+*not* checked here, since M4 itself is the order-dependence check for that reading.
 **[K]** = `RuleSet.intermezzo_reading` (v1: `(ii)` = unconditional defensive precedence;
-alt: `(i)` attacker-sequenced, §13.4).
+alt: `(i)` attacker-sequenced, §13.4, implemented Phase 11a).
 
 **R8 — Oldest-valid reservation fires.** *(S2)*
 On a trigger, exactly the **age-minimal valid** reservation on the protégé fires; all
@@ -424,17 +436,26 @@ programs under $\chi$, resolve, and assert the result equals the $\chi$-image of
 unmirrored result. **This is the single most important non-trivial test in the suite.**
 
 **M4 — Reservation-order independence of defense.** *(S0, [K])*
-The defensive outcome (who survives an attack on a defended structure) is invariant to
-the **attacker's** declaration order of its captures — the operational essence of
-Reading (ii). *Ref.* §6.4 worked example, §12.1. *Check.* fix a defended fixture; permute
-the attacker's intra-program order over all $k!$ orderings; assert identical survivors.
-**[K]** contingent on `RuleSet.intermezzo_reading = (ii)`; under Reading `(i)` this
-invariant is *deliberately false* and must be replaced by the order-dependent
-specification of §13.4. **Confirmed ahead of exercise (A4):** this branch is the
-harness's contract for Phase 11a, which is the first place `intermezzo_reading = "i"`
-is actually driven through the registry and this invariant's `(i)`-branch fires for
-real; nothing here changes as a result of that exercise, since the branching
-language was already the intended reading.
+**Under `RuleSet.intermezzo_reading = (ii)`** (v1 default): the defensive outcome (who
+survives an attack on a defended structure) is invariant to the **attacker's**
+declaration order of its captures — the operational essence of Reading (ii).
+*Ref.* §6.4 worked example, §12.1. *Check.* fix a defended fixture; permute the
+attacker's intra-program order over all $k!$ orderings; assert identical survivors.
+
+**Under `(i)`** (landed Phase 11a, spec §13.4): this invariant is *deliberately false*
+as stated above and is replaced by the following order-*dependent* property, which is
+what the harness actually checks under this reading: partition the attacker's declared
+captures into rounds by declared index (§13.4); a protégé's reservation is valid
+**iff its defender has not already been captured in an earlier round**. Concretely, on
+a fixture with one contact-defended protégé and both the protégé and its defender
+attacked in the same phase (spec §13.4's re-derived worked example): declaring the
+protégé-attack before the defender-attack reproduces Reading (ii)'s outcome (the
+defense holds, the attacker loses its capturing piece); declaring the defender-attack
+first strips the reservation before it can fire (the defense fails, both defended
+pieces fall for free). *Check.* fix the same defended fixture as the `(ii)` branch;
+assert the two orderings produce the *specified differing* survivor sets above, not
+merely "differing somehow."
+**[K]** = `RuleSet.intermezzo_reading`.
 
 **M5 — Symmetric-position value antisymmetry.** *(S1, requires solver layer)*
 For a color-symmetric position $s=\chi(s)$, the one-phase stage game is symmetric, hence
