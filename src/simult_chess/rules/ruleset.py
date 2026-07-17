@@ -38,8 +38,11 @@ class RuleSet:
         Mid-path collision semantics. v1: ``"B"`` (declaration-priority pairing).
         Couples: ``R4``.
     intermezzo_reading : IntermezzoReading
-        Defensive-precedence semantics. v1: ``"ii"`` (unconditional). Couples:
-        ``R7``, ``M4`` (flips ``M4`` from *true* to *order-dependent* under ``"i"``).
+        Defensive-precedence semantics. v1 default: ``"ii"`` (unconditional).
+        ``"i"`` (attacker-sequenced, spec §13.4, implemented Phase 11a) is a
+        registered alternative, to be A/B-tested empirically in Phase 11b.
+        Couples: ``R7``, ``M4`` (flips ``M4`` from *true* to *order-dependent*
+        under ``"i"``).
     """
 
     n_actions: int = 2
