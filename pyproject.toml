@@ -21,6 +21,10 @@ oracle = ["chess>=1.11.2"]
 # extra, same pattern as `oracle`'s `chess` dependency, so core/rules stay
 # standard-library only; only simult_chess.solver may import numpy/scipy.
 solver = ["numpy>=1.26", "scipy>=1.11"]
+# pyspiel simultaneous-move adapter (Phase 12). Quarantined behind this
+# extra, same pattern as oracle/solver: core/rules/referee never import
+# pyspiel, only simult_chess.interop may.
+openspiel = ["open_spiel>=1.5", "numpy>=1.26"]
 dev = ["ruff", "mypy", "pytest", "hypothesis"]
 
 [tool.setuptools.packages.find]
@@ -42,6 +46,12 @@ packages = ["simult_chess"]
 # scipy ships partial/no inline type information; numpy is fully typed and
 # needs no override. Solver-only (A7) -- core/rules never import either.
 module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pyspiel is a compiled pybind11 extension with no type stubs. interop-only
+# (Phase 12) -- core/rules/referee never import it.
+module = "pyspiel"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
