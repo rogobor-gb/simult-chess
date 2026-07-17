@@ -236,3 +236,8 @@ scripts/flatten_project.py
 # Agent-facing development roadmap docs (local-only, not shared with the team/repo)
 docs/DEVELOPMENT.md
 docs/DEVELOPMENT_addendum_v1.1.md
+
+# Phase 11b campaign raw-data cache (regenerable from harness/campaign.py's
+# pre-registered run specs; only the rendered reports/campaign_v1.md and the
+# code that produced it are committed)
+campaign_runs/

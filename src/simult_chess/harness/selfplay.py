@@ -9,12 +9,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from simult_chess.agents.base import Agent
-from simult_chess.core.types import Color, State
+from simult_chess.core.types import Color, Program, State
 from simult_chess.core.violation import Violation
-from simult_chess.invariants.harness import run_phase
+from simult_chess.invariants.harness import HarnessResult, run_phase
 from simult_chess.invariants.severity import Severity, severity_of
 from simult_chess.referee.observe import ObservationChannel
 from simult_chess.rules.ruleset import RuleSet
+
+PhaseHook = Callable[[int, State, Program, Program, HarnessResult], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,12 +74,19 @@ def play_one_game(
     rng_seed: int,
     *,
     max_phases: int = 500,
+    on_phase_result: PhaseHook | None = None,
 ) -> GameReport:
     """Play one seeded game with per-phase invariant checking in lenient mode.
 
     Determinism (dev brief Phase 6 DoD): the same `rng_seed` always
     reproduces the same game, since the agents only draw from the seeded
     `random.Random` instances constructed here.
+
+    `on_phase_result`, if given, is invoked once per phase with
+    `(phase_index, state_before, program_white, program_black, result)` --
+    `state_before` is the pre-phase state, so `result.phi_result.state` (when
+    not `None`) is this phase's successor. Lets callers (e.g. the Phase 11b
+    campaign harness) derive per-phase estimands without forking this loop.
     """
     rng_white = random.Random(rng_seed)
     rng_black = random.Random(rng_seed ^ 0x5EED)
@@ -108,6 +117,8 @@ def play_one_game(
             ViolationRecord(rng_seed=rng_seed, phase_index=phase_index, violation=v)
             for v in result.violations
         )
+        if on_phase_result is not None:
+            on_phase_result(phase_index, state, program_white, program_black, result)
 
         if result.phi_result is None:
             outcome = "aborted"
