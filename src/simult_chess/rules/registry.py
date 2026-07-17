@@ -19,6 +19,7 @@ from simult_chess.core.stages.annihilate import (
     resolve_annihilation,
 )
 from simult_chess.core.stages.defense import DefenseResult, resolve_defense
+from simult_chess.core.stages.defense_seq import resolve_defense_seq
 from simult_chess.core.stages.fizzle import FizzleResult, resolve_fizzles
 from simult_chess.core.types import Reservation, Square, State
 from simult_chess.rules.ruleset import (
@@ -104,14 +105,16 @@ class DefenseResolver(Protocol):
 
 _DEFENSE_RESOLVERS: dict[IntermezzoReading, DefenseResolver] = {
     "ii": resolve_defense,
+    "i": resolve_defense_seq,
 }
 
 
 def get_defense_resolver(ruleset: RuleSet) -> DefenseResolver:
     """Look up the Stage B implementation registered for `ruleset`.
 
-    Only the v1 unconditional-precedence reading ("ii") is implemented; the
-    attacker-sequenced reading is a to-be-A/B-tested variant (spec §13.4).
+    "ii" is the v1 default (unconditional defensive precedence); "i" is the
+    attacker-sequenced alternative landed in Phase 11a (spec §13.4), to be
+    A/B-tested empirically in Phase 11b.
     """
     try:
         return _DEFENSE_RESOLVERS[ruleset.intermezzo_reading]
