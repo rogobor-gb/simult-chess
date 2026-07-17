@@ -26,6 +26,10 @@ pip install -e ".[oracle]"
 # + the stage-matrix/LP solver layer and its matrix_1ply agent (numpy, scipy;
 # quarantined behind this extra so core/rules stay standard-library only)
 pip install -e ".[solver]"
+
+# + the OpenSpiel (pyspiel) simultaneous-move adapter (open_spiel, numpy;
+# quarantined behind this extra so core/rules/referee stay free of it)
+pip install -e ".[openspiel]"
 ```
 
 Requires Python ≥3.10.
@@ -72,7 +76,11 @@ scripts/check.sh            # ruff + mypy --strict + the fast pytest subset
 `tests/property/` holds the metamorphic suite (inv M1–M4: purity, internal
 order-independence, χ-color-swap equivariance) and the geometry
 cross-validation against python-chess (needs the `oracle` extra; skips
-cleanly without it).
+cleanly without it). `tests/unit/test_openspiel_*.py` cover the OpenSpiel
+adapter (needs the `openspiel` extra): registration, a 100-game conformance
+check against the native referee, and smoke tests running a full game
+through OpenSpiel's own `uniform_random` bot and a small clone()-based
+simultaneous-move rollout search.
 
 Headless self-play sweeps (seeded, invariant-checked, aggregated by
 violation severity) run via `harness/selfplay.py:run_sweep` — see its
@@ -91,7 +99,8 @@ src/simult_chess/
 ├── harness/     # seeded self-play sweeps, violation reports
 ├── ui/          # notation DSL, ASCII board render, hot-seat/human-vs-agent sessions
 ├── net/         # commit-reveal protocol, asyncio TCP transport, online session
-└── solver/      # stage-matrix/LP layer (needs the solver extra): matrix_1ply
+├── solver/      # stage-matrix/LP layer (needs the solver extra): matrix_1ply
+└── interop/     # OpenSpiel/pyspiel adapter (needs the openspiel extra)
 
 docs/
 ├── simultaneous_chess_spec_v1.md   # ground-truth rule specification (spec)
