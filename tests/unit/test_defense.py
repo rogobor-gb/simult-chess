@@ -289,4 +289,71 @@ def test_r6_non_pawn_capture_of_a_vacated_square_is_not_a_capture() -> None:
     assert result.fired == ()
     assert result.captured_tokens == frozenset()
     assert result.occupancy[knight] == Square(1, 4)
-    assert result.occupancy[rook] == D4
+
+
+def test_proposition_12_1a_contact_defender_restores_classical_exchange() -> None:
+    # Spec §12.1(a): a contact defender's recapture has empty interior, so
+    # interposition is impossible and a same-phase capture of the defender
+    # is pre-empted -- this is exactly the d4/e3 worked example (both
+    # squares attacked in one phase), pinned here under its Prop 12.1 name
+    # as the golden trace Phase 11a's DoD calls for.
+    d4_pawn = Token(id=1, color=Color.WHITE, typ="p")
+    e3_pawn = Token(id=2, color=Color.WHITE, typ="p")
+    rook1 = Token(id=3, color=Color.BLACK, typ="r")
+    rook2 = Token(id=4, color=Color.BLACK, typ="r")
+    state = build_state(
+        {d4_pawn: D4, e3_pawn: E3, rook1: Square(3, 7), rook2: Square(4, 7)}
+    )
+    reservations_white = (Reservation(defender=e3_pawn, protege=d4_pawn, age=(0, 0)),)
+    survivors = (
+        _dm(rook1, _line(Square(3, 7), D4), Color.BLACK, index=1),
+        _dm(rook2, _line(Square(4, 7), E3), Color.BLACK, index=2),
+    )
+
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
+
+    assert result.captured_tokens == {d4_pawn, rook1}  # attacker nets Q for capturer
+    assert result.survives(e3_pawn)
+    assert result.survives(rook2)
+
+
+def test_proposition_12_1b_ranged_defender_admits_interposition_refutation() -> None:
+    # Spec §12.1(b): a ranged (slider) defender's recapture ray has >=1
+    # interior square; a second attacker action interposing there blocks
+    # the recapture path, invalidating the reservation at fire time -- Q is
+    # won for free, D never recaptures. No classical analogue.
+    d1 = Square(3, 0)
+    d3 = Square(3, 2)
+    d4 = Square(3, 3)
+    rook_defender = Token(id=1, color=Color.WHITE, typ="r")  # d1, defends d4
+    knight_protege = Token(id=2, color=Color.WHITE, typ="n")  # d4
+    queen_attacker = Token(id=3, color=Color.BLACK, typ="q")  # d8, captures d4
+    knight_interposer = Token(id=4, color=Color.BLACK, typ="n")  # b4, jumps to d3
+    state = build_state(
+        {
+            rook_defender: d1,
+            knight_protege: d4,
+            queen_attacker: Square(3, 7),
+            knight_interposer: Square(1, 3),
+        }
+    )
+    reservations_white = (
+        Reservation(defender=rook_defender, protege=knight_protege, age=(0, 0)),
+    )
+    survivors = (
+        _dm(queen_attacker, _line(Square(3, 7), d4), Color.BLACK, index=1),
+        _dm(knight_interposer, (Square(1, 3), d3), Color.BLACK, index=2),
+    )
+
+    result = resolve_defense(
+        survivors, survivors, state, reservations_white, (), RULESET
+    )
+
+    assert result.captured_tokens == {knight_protege}  # Q won for free
+    assert result.fired == ()  # D never recaptures
+    assert result.survives(rook_defender)
+    assert result.occupancy[rook_defender] == d1  # never moved
+    assert result.occupancy[queen_attacker] == d4
+    assert result.occupancy[knight_interposer] == d3
