@@ -22,6 +22,12 @@ see `docs/DEVELOPMENT_addendum_v1.1.md` §A):
   separately declares an action for that same flank rook — this changes the legal-
   program set relative to v1.0 (A3).
 
+**Phase 11a (2026-07-17).** §13.4 added: the full formal specification (with
+well-definedness lemma and a re-derived worked example) of the attacker-sequenced
+intermezzo, Reading (i) — previously a one-line deferred-lever mention only.
+`RuleSet.intermezzo_reading = "i"` is now an implemented, registered Stage B
+variant; inv M4 branches accordingly (INVARIANTS.md).
+
 ---
 
 ## 0. Purpose, scope, and the type of the object
@@ -367,9 +373,100 @@ Multiple reservations are **core** to v1 (a loss of tempo traded for solidity). 
 1. **Hidden information** (Ch. 11) — the intended second milestone.
 2. **Timed (one-tick-per-square) resolution** — distinguishes perpendicular crossings, enables in-phase interception/tempo; large edge-case surface.
 3. **Geometric conflict selection** — pair a multi-crossing mover with its *first* victim along the path; requires stable-matching with tie-breaks (rejected for v1 in favor of declaration-priority, §6.3).
-4. **Attacker-sequenced intermezzo (Reading (i))** — a leaner, order-dependent defense; to be A/B-tested against Reading (ii).
+4. **Attacker-sequenced intermezzo (Reading (i))** — a leaner, order-dependent defense; specified in §13.4 below, to be A/B-tested against Reading (ii) (Phase 11 of `docs/DEVELOPMENT_addendum_v1.1.md`).
 5. **Trap reservations** — reserve a square against *any* arrival (not just defense of an owned piece); flagged as too random for v1.
 6. **$N\ge 3$, larger boards, reinstated en passant** — future variants.
+
+### 13.4 Attacker-sequenced intermezzo — Reading (i)
+
+**Status.** A swappable Stage B implementation (`RuleSet.intermezzo_reading =
+"i"`), registered alongside the v1 default Reading (ii) (§6.4) via
+`rules/registry.py` — a variant is a swapped stage, never a fork of $\Phi$.
+Landed as code in Phase 11a of the addendum; A/B-tested empirically in
+Phase 11b, exactly as item 4 above anticipates.
+
+**Motivation.** Reading (ii)'s intermezzo is *categorical*: a valid
+reservation fires and pre-empts a same-phase capture of its defender
+**regardless of the attacker's declaration order** — this is what Lemma
+6.4a/6.4b prove and what the d4/e3 worked example (§6.4) demonstrates.
+Reading (i) is the "leaner", order-*dependent* alternative the designer
+flagged for A/B-testing: it drops the defender-favoring lookahead and
+instead resolves captures strictly in the order the **attacker** declared
+them, so a defender struck down *before* its protégé is captured can no
+longer recapture — the reservation is invalidated by its own defender's
+death, not pre-emptively protected from it.
+
+**Formal definition.** Fix the pending-capture map of §6.4's opening
+paragraph: $c=(\alpha,V,x)$ for each surviving mover $\alpha$ arriving at
+$x$ on stationary enemy $V$. Partition the contested squares into **rounds**
+by the attacking mover's own declared index (spec §3/§6.3's $i$, "the
+internal order… chosen by its owner"): round $k$ contains every square
+$x$ whose attacker declared that capture as their $k$-th action. Rounds are
+processed in increasing $k$; **within** a round, if it contains squares from
+only one color (the overwhelmingly common case, since one player's own
+program is already index-linear), each is resolved directly. If a round
+happens to contain squares from **both** colors (both sides independently
+declared a capture as, say, their first action) — a tie the two colors'
+otherwise-incomparable indices cannot break without privileging one side —
+that tie is resolved using Reading (ii)'s own defender-lookahead (§6.4),
+**restricted to just that round's squares**, so the tie itself stays
+color-symmetric even though the reading as a whole is not order-symmetric.
+
+Within a resolved square, the cascade is identical to §6.4: $V$ is removed;
+its oldest valid reservation (if any) fires, the defender recaptures on $x$
+(vacating its own square, voiding any *already-resolved-or-later* capture
+aimed there), and the process repeats on the new holder until quiescent —
+the difference from Reading (ii) is entirely in **which board a
+reservation's validity is checked against**: under (i), a round-$k$
+reservation sees the board *as left by every round $<k$*, so an
+earlier-processed capture of the would-be defender has already invalidated
+it (defender dead $\Rightarrow$ no valid reservation) by the time its
+protégé's turn comes. The mutual-defense tie-break of §6.4 ($P$ defends $Q$,
+$Q$ defends $P$, both attacked in the *same* round: base semantics, neither
+recaptures) carries over unchanged — under strict round ordering a cycle can
+only arise inside a single tied round in the first place, since distinct
+rounds resolve strictly in sequence and a genuine 2-cycle needs both events
+simultaneously unresolved.
+
+**Lemma 13.4 (well-definedness).** *Reading (i) terminates and is a pure
+function of the two declared programs.*
+*Proof sketch.* Rounds are finite (at most $N$ per color) and strictly
+ordered by $k$, so the outer loop terminates; within a round the same
+strictly-decreasing-live-token-count argument as Lemma 6.4c bounds the
+inner cascade. Every input to the resolution (round membership, validity
+checks, the intra-round tie) is read off the two programs' declared indices
+and the board — no wall-clock, no unseeded randomness (inv M1). Determinacy
+across *processing* order (which square within a round is visited first,
+analogous to inv M2c) still holds, since only the tied-round case has more
+than one square to order and that case reuses Reading (ii)'s already-proven
+order-independent lookahead (Lemma 6.4a). $\qquad\blacksquare$
+
+**Worked example, re-read.** White pawns on `d4`, `e3`; reservation
+(e3-pawn defends d4-pawn); Black rook$_1$ aims at `d4`, rook$_2$ aims at
+`e3` (§6.4's own fixture). Under Reading (i) the outcome now depends on
+which rook Black declares first:
+- **Attack the protégé first** (rook$_1$ vs `d4` is Black's action 1,
+  rook$_2$ vs `e3` is action 2): round 1 resolves `d4` — the d4-pawn dies,
+  its reservation is still valid (e3-pawn alive, on-square, unobstructed),
+  so e3-pawn recaptures on `d4`, killing rook$_1$ and vacating `e3`. Round 2
+  resolves `e3` — empty (its holder moved away to recapture in round 1), so
+  rook$_2$ simply arrives, no capture. **Net: identical to Reading (ii)** —
+  Black loses a rook for a pawn.
+- **Attack the defender first** (rook$_2$ vs `e3` is action 1, rook$_1$ vs
+  `d4` is action 2): round 1 resolves `e3` — the e3-pawn dies outright (it
+  defends `d4`, but nothing defends `e3`, so no recapture fires). Round 2
+  resolves `d4` — the d4-pawn's only reservation names the now-dead e3-pawn
+  as defender, which is no longer *valid* (defender dead), so d4-pawn also
+  dies outright, no recapture. **Net: Black loses nothing** — both pawns
+  fall for the cost of arriving on two now-undefended squares.
+
+This is the sense in which Reading (i) is "leaner": the same reservation
+that unconditionally holds under (ii) is a coin the attacker can defuse
+under (i), *if and only if* they spend their declaration order striking the
+defender ahead of the protégé. Inv M4 (reservation-order independence)
+holds under `"ii"` as stated and is **deliberately false** under `"i"`,
+where it is replaced by exactly this order-dependent specification
+(INVARIANTS.md M4, `[K]`).
 
 ---
 
