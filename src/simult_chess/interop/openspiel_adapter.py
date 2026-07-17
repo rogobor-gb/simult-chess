@@ -275,6 +275,29 @@ class SimultChessState(pyspiel.State):  # type: ignore[misc]
     def returns(self) -> list[float]:
         return list(self._returns)
 
+    def clone(self) -> SimultChessState:
+        """Override pyspiel's default clone (Python `copy.deepcopy`, which
+        cannot handle the `mappingproxy`-backed immutable fields of
+        `simult_chess.core.types.State` -- an existing Phase 1 design choice,
+        out of scope to change here). Our wrapped native `State` is already
+        fully immutable (every `_apply_actions` call *replaces* `self._state`
+        wholesale via `phi`, never mutates it in place), so a correct clone
+        needs no deep copy at all -- just a fresh wrapper sharing it. Needed
+        for MCTSBot and any other algorithm that forks the search tree via
+        `State.clone()`."""
+        cloned = SimultChessState(self.get_game(), self._state)
+        cloned._outcome = self._outcome
+        cloned._returns = list(self._returns)
+        cloned._cached_programs = dict(self._cached_programs)
+        return cloned
+
+    def __deepcopy__(self, memo: dict[int, object]) -> SimultChessState:
+        """Some OpenSpiel wrappers (e.g. `load_game_as_turn_based`'s
+        `TurnBasedSimultaneousState`) reach for plain `copy.deepcopy` on a
+        nested Python state rather than calling its `.clone()`; intercepting
+        here gives the same safe, non-deep-copying behavior either way."""
+        return self.clone()
+
     @property
     def state(self) -> State:
         """The wrapped native `simult_chess.core.types.State` (not part of
