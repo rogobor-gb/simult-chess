@@ -25,6 +25,12 @@ solver = ["numpy>=1.26", "scipy>=1.11"]
 # extra, same pattern as oracle/solver: core/rules/referee never import
 # pyspiel, only simult_chess.interop may.
 openspiel = ["open_spiel>=1.5", "numpy>=1.26"]
+# LIGHT-profile self-play learning system (Phase 13b, docs/LEARNING_DESIGN.md).
+# Quarantined behind this extra, same pattern as oracle/solver/openspiel: only
+# simult_chess.learn imports torch; core/rules/referee stay torch-free (checked
+# by tests/unit/test_learn_quarantine.py). The SM-MCTS hot path runs on the
+# native State + phi directly (design §2.3/§4), so pyspiel is not a runtime dep.
+learn = ["torch>=2.1", "numpy>=1.26"]
 dev = ["ruff", "mypy", "pytest", "hypothesis"]
 
 [tool.setuptools.packages.find]
