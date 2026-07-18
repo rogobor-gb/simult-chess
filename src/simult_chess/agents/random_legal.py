@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import random
 
-from simult_chess.agents.candidates import move_candidates, reserve_candidates
+from simult_chess.agents.candidates import (
+    cancel_candidates,
+    move_candidates,
+    reserve_candidates,
+)
 from simult_chess.core import legality
 from simult_chess.core.types import Color, Program, State
 from simult_chess.rules.ruleset import RuleSet
@@ -27,10 +31,16 @@ def random_legal_program(
     action (a Move/Castle if any exist, else whatever's available) if no
     valid combination is found within `max_attempts`. Good enough diversity
     for fuzzing; always terminates; always legal.
+
+    The pool includes `cancel_candidates` (ruling D3, Phase 13b): a Cancel
+    is L2-illegal on its own while a displacement exists, so it only ever
+    survives sampling paired with a Move/Castle -- which is exactly how the
+    fuzzer now reaches the cancellation mechanic (spec §9).
     """
     movers = move_candidates(state, color, rng)
     reservers = reserve_candidates(state, color)
-    all_candidates = movers + reservers
+    cancels = cancel_candidates(state, color)
+    all_candidates = movers + reservers + cancels
     if not all_candidates:
         return ()
 

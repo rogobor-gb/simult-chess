@@ -7,6 +7,7 @@ import random
 from simult_chess.core import geometry
 from simult_chess.core.types import (
     Action,
+    Cancel,
     Castle,
     CastleSide,
     Color,
@@ -58,3 +59,18 @@ def reserve_candidates(state: State, color: Color) -> list[Action]:
             if pattern is not None:
                 candidates.append(Reserve(defender=defender, protege=protege))
     return candidates
+
+
+def cancel_candidates(state: State, color: Color) -> list[Action]:
+    """Every Cancel action for `color` (spec §4.1, §9): one per standing
+    reservation in R_color.
+
+    Before Phase 13b (ruling D3, docs/LEARNING_DESIGN.md) the shared
+    candidate generation never emitted Cancel, so no stdlib agent could
+    construct one -- the root of the Phase 11b campaign's *structural*
+    cancellation rate of 0.000. A Cancel-only program is L2-illegal while a
+    legal displacement exists, so a cancel is useful only paired with a
+    Move/Castle; callers that assemble multi-action programs (e.g.
+    `random_legal_program`) legalize the pairing through `L(s,π)`.
+    """
+    return [Cancel(reservation=r) for r in state.reservations(color)]
