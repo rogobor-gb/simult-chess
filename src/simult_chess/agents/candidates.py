@@ -45,6 +45,40 @@ def move_candidates(state: State, color: Color, rng: random.Random) -> list[Acti
     return candidates
 
 
+def exhaustive_move_and_castle_candidates(state: State, color: Color) -> list[Action]:
+    """Every individually-legal Move/Castle for `color`, expanding **every**
+    promotion choice for a pawn reaching the last rank (spec §4.2, §6.5, §6.6).
+
+    Unlike `move_candidates` (which samples one random promotion per
+    pawn-to-last-rank trajectory for agent use), this is fully exhaustive over
+    promotion, matching the fixed action grid's separate entry per promo type
+    (`learn.action_grid`). Pure function of `state` -- no rng. (The pyspiel
+    adapter keeps its own copy of this logic by a documented self-containment
+    choice; this is the shared home the learning system consumes.)
+    """
+    candidates: list[Action] = []
+    for token in state.board:
+        if token.color is not color or token in state.cooldown:
+            continue
+        for trajectory in geometry.pseudo_legal_trajectories(state, token):
+            reaches_last_rank = (
+                token.typ == "p" and trajectory.destination.rank == _LAST_RANK[color]
+            )
+            if reaches_last_rank:
+                for promotion in _PROMOTABLE:
+                    candidates.append(
+                        Move(token=token, trajectory=trajectory, promotion=promotion)
+                    )
+            else:
+                candidates.append(
+                    Move(token=token, trajectory=trajectory, promotion=None)
+                )
+    for side in _CASTLE_SIDES:
+        if geometry.castle_move(state, color, side) is not None:
+            candidates.append(Castle(side=side))
+    return candidates
+
+
 def reserve_candidates(state: State, color: Color) -> list[Action]:
     """Every individually-admissible Reserve action for `color` (spec §4.3)."""
     candidates: list[Action] = []

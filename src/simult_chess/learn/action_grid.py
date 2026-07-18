@@ -35,14 +35,27 @@ programs, so a slot-2 logit vector has ``SLOT_SIZE + 1`` entries.
 
 from __future__ import annotations
 
+from simult_chess.agents.candidates import (
+    cancel_candidates,
+    exhaustive_move_and_castle_candidates,
+    reserve_candidates,
+)
+from simult_chess.core import geometry
+from simult_chess.core.legality import is_legal_program
 from simult_chess.core.types import (
     Action,
     Cancel,
     Castle,
+    Color,
     Move,
     PieceType,
+    Program,
+    Reserve,
+    Square,
     State,
+    Token,
 )
+from simult_chess.rules.ruleset import RuleSet
 
 _BOARD = 8
 _SQUARES = _BOARD * _BOARD  # 64
@@ -141,3 +154,111 @@ def encode_action(action: Action, state: State) -> int:
         + square_index(defender.file, defender.rank) * _SQUARES
         + square_index(protege.file, protege.rank)
     )
+
+
+# --- Legality masking (design §3.3, §4.3) ---------------------------------
+#
+# The autoregressive head needs, per node, two O(pool) legality masks -- a
+# slot-1 mask and, for a chosen slot-1 action, a slot-2 mask -- NOT the full
+# O(pool^2) program enumeration (the ~35 ms path the design rejects, §4.4).
+# Each mask is returned as an ``index -> Action`` map: the keys are the legal
+# grid indices (what the network's logits are masked to), and the value is the
+# concrete native action to play when that index is sampled (the decode the
+# search needs -- the grid index alone is ambiguous for Cancel, §3.3/D4).
+
+
+def _single_action_pool(state: State, color: Color) -> list[Action]:
+    """Every individually-admissible single action of `color` (all four kinds,
+    every promotion) -- the candidate pool the masks are built from."""
+    return [
+        *exhaustive_move_and_castle_candidates(state, color),
+        *reserve_candidates(state, color),
+        *cancel_candidates(state, color),
+    ]
+
+
+def _register(result: dict[int, Action], state: State, action: Action) -> None:
+    """Insert ``action`` at its grid index, resolving the one permitted
+    collision (D4): when several Cancels share a protege square, keep the one
+    naming the **oldest** reservation -- what that grid entry decodes to
+    (R-multi-in oldest-valid-fires, spec §6.4)."""
+    index = encode_action(action, state)
+    existing = result.get(index)
+    if existing is None:
+        result[index] = action
+        return
+    if (
+        isinstance(action, Cancel)
+        and isinstance(existing, Cancel)
+        and action.reservation.age < existing.reservation.age
+    ):
+        result[index] = action
+
+
+def slot1_legal_actions(
+    state: State, color: Color, ruleset: RuleSet
+) -> dict[int, Action]:
+    """``index -> action`` for every action that can legally **start** a
+    program: either a legal single-action program ``(a,)`` (Move/Castle, or
+    any action when no displacement exists, L2) or the first of some legal
+    pair ``(a, b)`` (a Reserve/Cancel completed by a Move/Castle)."""
+    pool = _single_action_pool(state, color)
+    displacements = [a for a in pool if isinstance(a, Move | Castle)]
+    result: dict[int, Action] = {}
+    for action in pool:
+        if is_legal_program(state, (action,), color, ruleset):
+            _register(result, state, action)
+        elif ruleset.n_actions >= 2 and any(
+            is_legal_program(state, (action, second), color, ruleset)
+            for second in displacements
+        ):
+            _register(result, state, action)
+    return result
+
+
+def _moved_token_destinations(
+    state: State, color: Color, first: Action
+) -> dict[Token, Square]:
+    """The tokens `first` displaces, mapped to their destinations -- the
+    protege candidates for an aggressive-dual reserve (spec §6.2)."""
+    moved: dict[Token, Square] = {}
+    if isinstance(first, Move):
+        moved[first.token] = first.trajectory.destination
+    elif isinstance(first, Castle):
+        castle = geometry.castle_move(state, color, first.side)
+        if castle is not None:
+            moved[castle.king_token] = castle.king_trajectory.destination
+            moved[castle.rook_token] = castle.rook_trajectory.destination
+    return moved
+
+
+def _second_action_candidates(
+    state: State, color: Color, first: Action
+) -> list[Action]:
+    """Candidate second actions given slot-1 `first`, including **aggressive
+    dual** reserves of a piece `first` is moving (admissible against its
+    destination, not its current square -- so absent from `reserve_candidates`
+    and from the exhaustive adapter enumeration; L6 judges the destination)."""
+    candidates = _single_action_pool(state, color)
+    for moved_token in _moved_token_destinations(state, color, first):
+        for defender in state.board:
+            if defender.color is color and defender != moved_token:
+                candidates.append(Reserve(defender=defender, protege=moved_token))
+    return list(dict.fromkeys(candidates))
+
+
+def slot2_legal_actions(
+    state: State, color: Color, ruleset: RuleSet, first: Action
+) -> tuple[dict[int, Action], bool]:
+    """Given a legal slot-1 `first`, return ``(index -> second action, single_
+    action_legal)``: the legal second actions ``b`` such that ``(first, b)`` is
+    a legal program, and whether the single-action program ``(first,)`` itself
+    is legal (the ``NO_SECOND_INDEX`` entry of the slot-2 head)."""
+    single_action_legal = is_legal_program(state, (first,), color, ruleset)
+    result: dict[int, Action] = {}
+    if ruleset.n_actions >= 2:
+        for second in _second_action_candidates(state, color, first):
+            program: Program = (first, second)
+            if is_legal_program(state, program, color, ruleset):
+                _register(result, state, second)
+    return result, single_action_legal
