@@ -142,12 +142,14 @@ def test_apply_actions_advances_and_matches_native_phi() -> None:
 
 
 def test_observer_tensor_has_the_documented_shape() -> None:
+    # 21 planes: 12 board + 1 cooldown + 4 reservation-actor + 4 reservation-
+    # pairing (D5, docs/LEARNING_DESIGN.md §3.2).
     game = pyspiel.load_game("simult_chess")
     state = game.new_initial_state()
     observer = game.make_py_observer()
     observer.set_from(state, 0)
-    assert observer.tensor.shape == (17 * 8 * 8 + 7,)
-    assert observer.dict["planes"].shape == (17, 8, 8)
+    assert observer.tensor.shape == (21 * 8 * 8 + 7,)
+    assert observer.dict["planes"].shape == (21, 8, 8)
     assert observer.dict["scalars"].shape == (7,)
     # Standard start: all four castling rights true, no-progress 0, phase
     # parity 0, horizon = RuleSet default 50.
@@ -155,6 +157,36 @@ def test_observer_tensor_has_the_documented_shape() -> None:
     # 16 white + 16 black pieces on the board -> 32 marked squares total
     # across the 12 (color, type) planes.
     assert observer.dict["planes"][:12].sum() == 32
+    # No reservations stand at the opening, so the 4 reservation-actor planes
+    # (13..16) and the 4 pairing planes (17..20) are all zero.
+    assert observer.dict["planes"][13:].sum() == 0.0
+
+
+def test_observer_encodes_the_reservation_pairing_offset() -> None:
+    # D5: at the defender's square the pairing planes hold the (Δfile, Δrank)
+    # offset to its oldest active protege, normalized to [-1, 1] (÷7).
+    from simult_chess.interop.openspiel_adapter import SimultChessGame, SimultChessState
+
+    native_state, _ = _state_with_a_white_reservation()
+    game = SimultChessGame()
+    state = SimultChessState(game, native_state)
+    observer = game.make_py_observer()
+    observer.set_from(state, 0)
+    planes = observer.dict["planes"]
+
+    # Defender e3-pawn at (file 4, rank 2); protege d4-pawn at (file 3, rank 3).
+    # Actor planes: white_defenders=13 at defender square, white_proteges=14.
+    assert planes[13, 2, 4] == 1.0
+    assert planes[14, 3, 3] == 1.0
+    # Pairing planes 17 (Δfile) and 18 (Δrank) keyed at the DEFENDER square.
+    assert planes[17, 2, 4] == pytest.approx((3 - 4) / 7.0)
+    assert planes[18, 2, 4] == pytest.approx((3 - 2) / 7.0)
+    # Nothing written at the protege square in the pairing planes.
+    assert planes[17, 3, 3] == 0.0
+    assert planes[18, 3, 3] == 0.0
+    # Black pairing planes (19, 20) untouched -- no black reservation.
+    assert planes[19].sum() == 0.0
+    assert planes[20].sum() == 0.0
 
 
 def test_full_random_game_reaches_a_terminal_outcome() -> None:

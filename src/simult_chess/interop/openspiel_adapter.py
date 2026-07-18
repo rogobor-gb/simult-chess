@@ -43,19 +43,28 @@ headroom over that and `_apply_actions` asserts against it rather than
 silently truncating, so any true violation is a loud, investigable error,
 not a silent correctness gap.
 
-Tensor observation encoding (reused by Phase 13's `docs/LEARNING_DESIGN.md`
-once written -- this module is the source of truth until then)
+Tensor observation encoding (source of truth; folded into and extended by
+`docs/LEARNING_DESIGN.md` §3 -- the reservation-pairing planes below are the
+Phase 13b, ruling D5 extension of the original Phase 12 (17-plane) encoding)
 ----------------------------------------------------------------------
 A flat `float32` vector, `dict`-viewed as:
-- `"planes"`, shape `(17, 8, 8)`: 12 board-occupancy planes (one per
+- `"planes"`, shape `(21, 8, 8)`: 12 board-occupancy planes (one per
   (color, type) pair, spec §1.1's `col`/`typ`), 1 cooldown plane (spec §7),
-  and 4 reservation-actor planes -- `(white_defenders, white_proteges,
+  4 reservation-actor planes -- `(white_defenders, white_proteges,
   black_defenders, black_proteges)`, one square marked per live token that
-  currently plays that role in >=1 active reservation. This is a
-  simplification flagged for Phase 13 to revisit if needed: it marks
-  *where* reservation actors stand, not *which* defender-protege pairing,
-  since a full pairwise (square, square) relation does not fit a per-square
-  plane encoding.
+  currently plays that role in >=1 active reservation, and 4 **reservation-
+  pairing** planes (D5, `docs/LEARNING_DESIGN.md` §3.2) -- 2 per color:
+  `(white_dq_dfile, white_dq_drank, black_dq_dfile, black_dq_drank)`. At each
+  defender's square, these hold the offset `(Δfile, Δrank)` to that
+  defender's **oldest active** protege (mirroring R-multi-in's oldest-valid-
+  fires precedence, spec §6.4), normalized to `[-1, 1]` (divide by 7). The
+  actor planes mark *where* reservation actors stand; the pairing planes add
+  *which defender defends whom* -- the strategic core (the defended-pair
+  theorem, spec §12.1) a per-square actor-only encoding could not express.
+  Only the defender-keyed direction is encoded: the relation is recoverable
+  from either endpoint, and the defender is the actor that fires (§3.2). A
+  defender's presence is read from its actor plane, so a genuine `Δfile == 0`
+  (same-file defence) is unambiguous against an empty square.
 - `"scalars"`, shape `(7,)`: the four `CastlingRights` booleans (spec
   §1.2's eta), the no-progress counter nu and horizon H (spec §10, T4), and
   phase-index parity (`phase_index % 2`).
@@ -77,6 +86,7 @@ from simult_chess.core.types import (
     Move,
     PieceType,
     Program,
+    Reservation,
     Reserve,
     Square,
     State,
@@ -358,7 +368,8 @@ class SimultChessObserver:
     `open_spiel.python.observation`). Builds the tensor encoding documented
     in this module's docstring."""
 
-    _NUM_PLANES = len(_PIECE_TYPES) * _NUM_PLAYERS + 1 + 4
+    # 12 board + 1 cooldown + 4 reservation-actor + 4 reservation-pairing (D5).
+    _NUM_PLANES = len(_PIECE_TYPES) * _NUM_PLAYERS + 1 + 4 + 4
     _NUM_SCALARS = 7
 
     def __init__(self, params: object) -> None:
@@ -388,6 +399,9 @@ class SimultChessObserver:
         index += 1
         white_defender_plane, white_protege_plane = index, index + 1
         black_defender_plane, black_protege_plane = index + 2, index + 3
+        index += 4
+        white_dq_dfile_plane, white_dq_drank_plane = index, index + 1
+        black_dq_dfile_plane, black_dq_drank_plane = index + 2, index + 3
 
         for token, square in native.board.items():
             plane = plane_of[(token.color, token.typ)]
@@ -395,6 +409,10 @@ class SimultChessObserver:
             if token in native.cooldown:
                 planes[cooldown_plane, square.rank, square.file] = 1.0
 
+        # oldest-per-defender-square reservation, for the pairing planes (D5):
+        # if a square defends several proteges (spec R-multi-out), encode the
+        # offset to the OLDEST active one, matching R-multi-in's firing order.
+        pairing_src: dict[tuple[bool, Square], Reservation] = {}
         for reservation in (*native.reservations_white, *native.reservations_black):
             defender_square = native.board.get(reservation.defender)
             protege_square = native.board.get(reservation.protege)
@@ -405,6 +423,20 @@ class SimultChessObserver:
                 planes[defender_plane, defender_square.rank, defender_square.file] = 1.0
             if protege_square is not None:
                 planes[protege_plane, protege_square.rank, protege_square.file] = 1.0
+            if defender_square is not None and protege_square is not None:
+                key = (is_white, defender_square)
+                current = pairing_src.get(key)
+                if current is None or reservation.age < current.age:
+                    pairing_src[key] = reservation
+
+        for (is_white, defender_square), reservation in pairing_src.items():
+            protege_square = native.board[reservation.protege]
+            dfile = (protege_square.file - defender_square.file) / 7.0
+            drank = (protege_square.rank - defender_square.rank) / 7.0
+            dfile_plane = white_dq_dfile_plane if is_white else black_dq_dfile_plane
+            drank_plane = white_dq_drank_plane if is_white else black_dq_drank_plane
+            planes[dfile_plane, defender_square.rank, defender_square.file] = dfile
+            planes[drank_plane, defender_square.rank, defender_square.file] = drank
 
         rights = native.bookkeeping.castling_rights
         scalars[0] = float(rights.white_kingside)
