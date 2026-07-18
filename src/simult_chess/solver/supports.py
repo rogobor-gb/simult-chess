@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import random
 
-from simult_chess.agents.candidates import move_candidates, reserve_candidates
+from simult_chess.agents.candidates import (
+    cancel_candidates,
+    move_candidates,
+    reserve_candidates,
+)
 from simult_chess.core import geometry, legality
 from simult_chess.core.types import (
     Action,
@@ -54,7 +58,7 @@ def enumerate_support(
     """A small, seeded, legal restricted support for `color` at `state`.
 
     Pruning heuristic: seeded-shuffle every individually-legal Move/Castle/
-    Reserve action (for a stable seeded tie-break), then stable-sort by
+    Reserve/Cancel action (for a stable seeded tie-break), then stable-sort by
     `_capture_value` descending and truncate to `max_single_actions` — the
     highest-value captures always survive the cut; ties (most commonly,
     all the quiet non-capturing moves) keep their shuffled order, giving
@@ -69,9 +73,24 @@ def enumerate_support(
     available, so if pure value-ranking would otherwise truncate the pool
     down to zero of them (every survivor a same-value Reserve), the single
     best Move/Castle candidate is swapped back in.
+
+    `Cancel` candidates are included (ruling D3, docs/LEARNING_DESIGN.md), so
+    `matrix_1ply` can actually play the cancellation mechanic (spec §9) rather
+    than be structurally blind to it — closing the Phase 11b campaign's
+    structural-0.000 caveat for the strategic agent too. `_capture_value`
+    scores a Cancel as 0 (quiet), so it competes with Reserves for pool slots;
+    a Cancel-only program is L2-illegal while a displacement exists, so
+    `_add`'s legality filter keeps cancels only as the second action of a
+    `(Move, Cancel)` pair. The LP downstream assigns dominated cancels ~0
+    weight, so this is near-neutral to strength but lets the mechanic surface
+    when it is actually part of an equilibrium mix.
     """
     movers = move_candidates(state, color, rng)
-    pool: list[Action] = [*movers, *reserve_candidates(state, color)]
+    pool: list[Action] = [
+        *movers,
+        *reserve_candidates(state, color),
+        *cancel_candidates(state, color),
+    ]
     rng.shuffle(pool)
     pool.sort(key=lambda action: _capture_value(state, color, action), reverse=True)
     pool = pool[:max_single_actions]

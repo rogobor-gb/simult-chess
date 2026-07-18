@@ -9,7 +9,13 @@ pytest.importorskip("numpy")
 from conftest import build_state  # noqa: E402
 
 from simult_chess.core import legality  # noqa: E402
-from simult_chess.core.types import Color, Square, Token  # noqa: E402
+from simult_chess.core.types import (  # noqa: E402
+    Cancel,
+    Color,
+    Reservation,
+    Square,
+    Token,
+)
 from simult_chess.referee.setup import standard_starting_state  # noqa: E402
 from simult_chess.rules.ruleset import RuleSet  # noqa: E402
 from simult_chess.solver.supports import enumerate_support  # noqa: E402
@@ -79,3 +85,34 @@ def test_enumerate_support_handles_a_sparse_board() -> None:
     assert support
     for program in support:
         assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+
+
+def test_enumerate_support_can_include_a_cancel_when_a_reservation_stands() -> None:
+    # D3: matrix_1ply's support now reaches Cancel (spec §9). A Cancel is
+    # L2-illegal alone while a displacement exists, so it surfaces only as the
+    # second action of a (Move, Cancel) pair. Small position -> the single
+    # cancel candidate survives truncation; search seeds for the pairing.
+    white_king = Token(id=100, color=Color.WHITE, typ="k")
+    black_king = Token(id=200, color=Color.BLACK, typ="k")
+    d4_pawn = Token(id=1, color=Color.WHITE, typ="p")
+    e3_pawn = Token(id=2, color=Color.WHITE, typ="p")
+    reservation = Reservation(defender=e3_pawn, protege=d4_pawn, age=(0, 0))
+    state = build_state(
+        {
+            white_king: Square(0, 0),
+            black_king: Square(7, 7),
+            d4_pawn: Square(3, 3),
+            e3_pawn: Square(4, 2),
+        },
+        reservations_white=(reservation,),
+    )
+    saw_cancel = False
+    for seed in range(50):
+        support = enumerate_support(
+            state, Color.WHITE, RULESET, random.Random(seed), max_programs=64
+        )
+        for program in support:
+            assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+            if any(isinstance(a, Cancel) for a in program):
+                saw_cancel = True
+    assert saw_cancel, "matrix_1ply support never included a Cancel over 50 seeds"
