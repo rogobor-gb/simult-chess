@@ -8,7 +8,17 @@ pytest.importorskip("numpy")
 import pyspiel  # noqa: E402
 
 from simult_chess.core import legality  # noqa: E402
-from simult_chess.core.types import Color  # noqa: E402
+from simult_chess.core.types import (  # noqa: E402
+    Bookkeeping,
+    Cancel,
+    CastlingRights,
+    Color,
+    Move,
+    Reservation,
+    Square,
+    State,
+    Token,
+)
 from simult_chess.interop import (
     openspiel_adapter,  # noqa: E402, F401 (registers the game)
 )
@@ -19,6 +29,36 @@ from simult_chess.referee.setup import standard_starting_state  # noqa: E402
 from simult_chess.rules.ruleset import RuleSet  # noqa: E402
 
 RULESET = RuleSet()
+
+
+def _state_with_a_white_reservation() -> tuple[State, Reservation]:
+    """Minimal legal-ish position with one standing white reservation: a
+    contact pawn defence (e3-pawn defends d4-pawn), the same shape as the M4
+    worked example. Both kings present so `has_any_legal_displacement` is
+    true, which is what makes a Cancel-only program L2-illegal (spec §4.4)."""
+    white_king = Token(id=100, color=Color.WHITE, typ="k")
+    black_king = Token(id=200, color=Color.BLACK, typ="k")
+    d4_pawn = Token(id=1, color=Color.WHITE, typ="p")
+    e3_pawn = Token(id=2, color=Color.WHITE, typ="p")
+    reservation = Reservation(defender=e3_pawn, protege=d4_pawn, age=(0, 0))
+    state = State(
+        board={
+            white_king: Square(0, 0),
+            black_king: Square(7, 7),
+            d4_pawn: Square(3, 3),
+            e3_pawn: Square(4, 2),
+        },
+        cooldown=frozenset(),
+        reservations_white=(reservation,),
+        reservations_black=(),
+        bookkeeping=Bookkeeping(
+            castling_rights=CastlingRights(),
+            repetition_ledger={},
+            no_progress_counter=0,
+            phase_index=0,
+        ),
+    )
+    return state, reservation
 
 
 def test_game_is_registered_under_its_short_name() -> None:
@@ -33,6 +73,39 @@ def test_enumerate_legal_programs_matches_legality_predicate() -> None:
     assert programs
     for program in programs:
         assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+
+
+def test_standard_start_emits_no_cancel_actions() -> None:
+    # No reservations stand at the opening, so the (D3) Cancel extension adds
+    # nothing there -- the enumeration is unchanged for the standard start.
+    state = standard_starting_state()
+    programs = enumerate_legal_programs(state, Color.WHITE, RULESET)
+    assert not any(isinstance(a, Cancel) for program in programs for a in program)
+
+
+def test_enumerate_emits_cancel_when_a_reservation_stands() -> None:
+    # D3 (docs/LEARNING_DESIGN.md): the exhaustive enumeration now emits
+    # Cancel, so the learned agent's action space is the full L(s,pi). A
+    # Cancel names the standing reservation and (per L2) legalizes only
+    # paired with a Move/Castle when a displacement exists.
+    state, reservation = _state_with_a_white_reservation()
+    programs = enumerate_legal_programs(state, Color.WHITE, RULESET)
+
+    cancels = [p for p in programs if any(isinstance(a, Cancel) for a in p)]
+    assert cancels, "no Cancel program emitted though a reservation stands"
+
+    for program in cancels:
+        assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+        for action in program:
+            if isinstance(action, Cancel):
+                assert action.reservation == reservation
+
+    # L2 forbids a Cancel-only program while a legal displacement exists, so
+    # every emitted Cancel program pairs the Cancel with a Move/Castle.
+    assert all(len(p) == 2 for p in cancels)
+    assert any(
+        isinstance(p[0], Move) or isinstance(p[1], Move) for p in cancels
+    ), "expected at least one Move+Cancel program"
 
 
 def test_initial_state_is_simultaneous_and_not_terminal() -> None:

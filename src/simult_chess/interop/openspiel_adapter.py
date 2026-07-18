@@ -29,6 +29,10 @@ algorithm driven through this adapter must see the true legal set). It also
 expands every promotion choice explicitly, unlike `agents/candidates.py`'s
 `move_candidates` (which samples one random promotion per pawn-to-last-rank
 trajectory for agent use) -- full fidelity to L(s,pi) requires all of them.
+It emits all four action kinds, `Cancel` included (Phase 13b, ruling D3 of
+`docs/LEARNING_DESIGN.md`): the learned agent's action space is the complete
+legal-program set, and emitting Cancel here is what closes the Phase 11b
+campaign's structural-0.000 cancellation caveat for the post-13b re-run (A5).
 
 `_MAX_DISTINCT_ACTIONS` is an empirically-set ceiling, not a real
 architectural limit: at the standard start and after a handful of random
@@ -66,6 +70,7 @@ from simult_chess.core import geometry, legality
 from simult_chess.core.phi import phi
 from simult_chess.core.types import (
     Action,
+    Cancel,
     Castle,
     CastleSide,
     Color,
@@ -156,16 +161,37 @@ def _exhaustive_reserve_candidates(state: State, color: Color) -> list[Action]:
     return candidates
 
 
+def _exhaustive_cancel_candidates(state: State, color: Color) -> list[Action]:
+    """Every Cancel action for `color` (spec §4.1, §9): one per standing
+    reservation in R_color. A Cancel names an existing reservation, so the
+    candidate set is exactly `state.reservations(color)` -- L6 accepts a
+    Cancel iff its reservation is in R_color, so these are legal by
+    construction. They surface (via the pool double-loop below) mainly as
+    the *second* action alongside a Move/Castle, because L2 keeps a
+    Cancel-only program illegal whenever a legal displacement exists -- which
+    is exactly how the mechanic is meant to be used (spec §9)."""
+    return [Cancel(reservation=r) for r in state.reservations(color)]
+
+
 def enumerate_legal_programs(
     state: State, color: Color, ruleset: RuleSet
 ) -> list[Program]:
     """Every legal program for `color` at `state` (spec §4.4's L(s,pi)),
     exhaustively -- see the module docstring for why this differs from
     both `agents/candidates.py` (samples one promotion) and
-    `solver/supports.py` (deliberately pruned)."""
+    `solver/supports.py` (deliberately pruned).
+
+    Emits all four action kinds, `Cancel` included (Phase 13b, ruling D3 of
+    `docs/LEARNING_DESIGN.md`). Before 13b neither this path nor
+    `agents/candidates.py` emitted Cancel, which is the root of the Phase 11b
+    campaign's *structural* cancellation rate of 0.000 (`reports/
+    campaign_v1.md`); emitting it here is what lets the learned agent's search
+    masks (and the post-13b campaign re-run, ruling A5) actually reach the
+    mechanic."""
     pool = [
         *_exhaustive_move_and_castle_candidates(state, color),
         *_exhaustive_reserve_candidates(state, color),
+        *_exhaustive_cancel_candidates(state, color),
     ]
     programs: list[Program] = []
     for action in pool:
