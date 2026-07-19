@@ -173,8 +173,19 @@ def train_step(
     """One SGD step on a minibatch of `TrainingExample`s. Puts `net` in
     `train()` mode (BatchNorm batch statistics -- correct for a training
     step; callers doing inference afterward must set `net.eval()` again,
-    e.g. via a fresh `NetworkEvaluator`, which does this itself)."""
+    e.g. via a fresh `NetworkEvaluator`, which does this itself) and moves
+    it to `device` (idempotent if already there) -- found via the Stage-F
+    pilot run: a caller that builds `net` fresh (default CPU placement) and
+    generates self-play data via `generate_self_play_games` (whose workers
+    reconstruct their own CPU copies from a state_dict, never touching the
+    caller's own `net` object) would otherwise hit an MPS/CPU tensor
+    mismatch on the very first training step, since only the *input batch*
+    was being moved to `device`, not the model itself. No unit test caught
+    this because they all used `device=torch.device("cpu")` throughout,
+    matching a freshly-constructed net's default placement -- the mismatch
+    only exists when `device` is MPS."""
     net.train()
+    net.to(device)
     batch = _stack_batch(examples, device)
     optimizer.zero_grad()
     loss, metrics = compute_loss(net, batch)

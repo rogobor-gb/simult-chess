@@ -102,6 +102,28 @@ def test_train_step_reduces_loss_on_a_fixed_batch() -> None:
     assert float(loss_after) < float(loss_before)
 
 
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="requires an MPS device"
+)
+def test_train_step_moves_a_cpu_net_to_the_target_device() -> None:
+    # Regression test for a real bug the Stage-F pilot run hit: a net built
+    # fresh (default CPU placement) and trained via train_step(..., device=
+    # mps) crashed with an MPS/CPU tensor mismatch, because only the input
+    # batch was being moved to `device`, not the model itself. No prior test
+    # caught this since they all used device=torch.device("cpu") throughout,
+    # matching a fresh net's default placement.
+    mps = torch.device("mps")
+    net = _tiny_net()
+    assert next(net.parameters()).device.type == "cpu"
+    optimizer = make_optimizer(net, TrainConfig())
+    buffer = _buffer_from_games(1)
+    examples = buffer.sample(4, random.Random(0))
+
+    train_step(net, optimizer, examples, mps)
+
+    assert next(net.parameters()).device.type == "mps"
+
+
 def test_checkpoint_round_trip_preserves_weights_and_step(tmp_path: object) -> None:
     from pathlib import Path
 
