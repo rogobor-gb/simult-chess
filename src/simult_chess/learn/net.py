@@ -6,10 +6,15 @@ board planes (a 28-channel stem input), the standard way to feed global
 features to a convolutional trunk; the trunk itself is B=6 residual blocks of
 F=64 filters (LIGHT).
 
-Policy head: the fixed factored grid of ``action_grid`` (SLOT_SIZE=9026 per
-slot), **autoregressive over the two program slots** -- a slot-1 head over the
-grid, then the chosen slot-1 action is embedded and concatenated to the shared
-policy features for a slot-2 head (SLOT_SIZE+1 logits, the +1 being
+Policy: :math:`f_\\theta(s)=(\\mathbf p_W, \\mathbf p_B, v)` -- **one forward
+pass predicts both colours' policies** (design §2.4: the state is perfect-
+information and player-independent, §3.1), via separate slot-1/slot-2 head
+weights per colour sharing one trunk. Each colour's policy is the fixed
+factored grid of ``action_grid`` (SLOT_SIZE=9026 per slot), **autoregressive
+over the two program slots**: a slot-1 head over the grid, then the chosen
+slot-1 action is embedded (one shared embedding table -- it embeds a grid
+index, not a colour-specific quantity) and concatenated to the policy
+features for that colour's slot-2 head (SLOT_SIZE+1 logits, the +1 being
 ``NO_SECOND_INDEX`` for single-action programs). Value head: 1x1 conv to one
 plane -> MLP -> tanh, output in [-1, 1] (§3.4).
 """
@@ -19,8 +24,11 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from simult_chess.core.types import Color
 from simult_chess.learn.action_grid import SLOT_SIZE
 from simult_chess.learn.config import NetConfig
+
+_COLOR_KEYS: dict[Color, str] = {Color.WHITE: "white", Color.BLACK: "black"}
 
 
 def default_device() -> torch.device:
@@ -47,9 +55,7 @@ class _ResidualBlock(nn.Module):
 
 
 class SimultChessNet(nn.Module):
-    """Policy-value network :math:`f_\\theta(s)=(p_W, p_B, v)`; one forward pass
-    predicts both colours' slot-1 logits and the value, and ``slot2_logits``
-    completes the autoregressive factorization given a chosen slot-1 action."""
+    """Policy-value network; see module docstring."""
 
     def __init__(self, config: NetConfig | None = None) -> None:
         super().__init__()
@@ -69,10 +75,17 @@ class SimultChessNet(nn.Module):
         )
         self.policy_bn = nn.BatchNorm2d(self.config.policy_channels)
         policy_dim = self.config.policy_channels * 8 * 8
-        self.slot1_head = nn.Linear(policy_dim, SLOT_SIZE)
+        self.slot1_heads = nn.ModuleDict(
+            {key: nn.Linear(policy_dim, SLOT_SIZE) for key in _COLOR_KEYS.values()}
+        )
+        # Shared across colours: it embeds a grid index, not a colour-specific
+        # quantity, so one table suffices.
         self.a1_embedding = nn.Embedding(SLOT_SIZE, self.config.a1_embed_dim)
-        self.slot2_head = nn.Linear(
-            policy_dim + self.config.a1_embed_dim, SLOT_SIZE + 1
+        self.slot2_heads = nn.ModuleDict(
+            {
+                key: nn.Linear(policy_dim + self.config.a1_embed_dim, SLOT_SIZE + 1)
+                for key in _COLOR_KEYS.values()
+            }
         )
 
         self.value_conv = nn.Conv2d(
@@ -107,26 +120,27 @@ class SimultChessNet(nn.Module):
 
     def forward(
         self, planes: torch.Tensor, scalars: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return ``(slot1_logits (N, SLOT_SIZE), value (N,), policy_features)``.
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return ``(slot1_white (N, SLOT_SIZE), slot1_black (N, SLOT_SIZE),
+        value (N,), policy_features)``.
 
         ``policy_features`` is returned so a caller (the search) can compute
-        ``slot2_logits`` for a sampled slot-1 action without re-running the
-        trunk.
+        either colour's ``slot2_logits`` for a sampled slot-1 action without
+        re-running the trunk.
         """
         trunk = self._trunk(planes, scalars)
         policy_features = self._policy_features(trunk)
-        slot1_logits = self.slot1_head(policy_features)
+        slot1_white = self.slot1_heads["white"](policy_features)
+        slot1_black = self.slot1_heads["black"](policy_features)
         value = self._value(trunk)
-        return slot1_logits, value, policy_features
+        return slot1_white, slot1_black, value, policy_features
 
     def slot2_logits(
-        self, policy_features: torch.Tensor, a1_indices: torch.Tensor
+        self, policy_features: torch.Tensor, a1_indices: torch.Tensor, color: Color
     ) -> torch.Tensor:
-        """Slot-2 logits ``(N, SLOT_SIZE + 1)`` conditioned on the chosen slot-1
-        grid indices ``a1_indices`` (N,)."""
+        """Slot-2 logits ``(N, SLOT_SIZE + 1)`` for `color`, conditioned on the
+        chosen slot-1 grid indices ``a1_indices`` (N,)."""
         embedded = self.a1_embedding(a1_indices)
-        logits: torch.Tensor = self.slot2_head(
-            torch.cat((policy_features, embedded), dim=1)
-        )
+        head = self.slot2_heads[_COLOR_KEYS[color]]
+        logits: torch.Tensor = head(torch.cat((policy_features, embedded), dim=1))
         return logits
