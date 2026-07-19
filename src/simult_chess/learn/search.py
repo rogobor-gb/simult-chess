@@ -40,6 +40,7 @@ from simult_chess.core.phi import phi
 from simult_chess.core.types import Action, Color, Program, State
 from simult_chess.learn.action_grid import (
     NO_SECOND_INDEX,
+    sample_index,
     slot1_legal_actions,
     slot2_legal_actions,
 )
@@ -191,15 +192,6 @@ def _regret_matching_strategy(
     }
 
 
-def _sample(distribution: dict[int, float], rng: random.Random) -> int:
-    keys = list(distribution.keys())
-    weights = [max(distribution[k], 0.0) for k in keys]
-    total = sum(weights)
-    if total <= 0.0:
-        return rng.choice(keys)
-    return rng.choices(keys, weights=weights, k=1)[0]
-
-
 def _update(stats: _ColorStats, taken: int, value: float) -> None:
     """Running-mean Q update for the taken action, then a **Regret Matching+**
     (Tammelin 2014) update for every other action, comparing its historical
@@ -288,8 +280,8 @@ def _simulate(
     for a, p in sigma_black.items():
         node.black.strategy_sum[a] += p
 
-    a1_white = _sample(sigma_white, rng)
-    a1_black = _sample(sigma_black, rng)
+    a1_white = sample_index(sigma_white, rng)
+    a1_black = sample_index(sigma_black, rng)
     first_white = node.white.actions[a1_white]
     first_black = node.black.actions[a1_black]
 
@@ -299,8 +291,8 @@ def _simulate(
     slot2_prior_black = evaluator.slot2_prior(
         node.context, Color.BLACK, node.state, ruleset, a1_black, first_black
     )
-    a2_white = _sample(slot2_prior_white, rng)
-    a2_black = _sample(slot2_prior_black, rng)
+    a2_white = sample_index(slot2_prior_white, rng)
+    a2_black = sample_index(slot2_prior_black, rng)
 
     slot2_actions_white, _ = slot2_legal_actions(
         node.state, Color.WHITE, ruleset, first_white

@@ -29,7 +29,12 @@ import torch
 
 from simult_chess.core.types import Action, Color, Program, State
 from simult_chess.interop.encoding import encode_state
-from simult_chess.learn.action_grid import NO_SECOND_INDEX, slot2_legal_actions
+from simult_chess.learn.action_grid import (
+    NO_SECOND_INDEX,
+    decode_program,
+    sample_index,
+    slot2_legal_actions,
+)
 from simult_chess.learn.config import SearchConfig
 from simult_chess.learn.net import SimultChessNet, default_device
 from simult_chess.learn.search import make_root, run_simulations
@@ -102,15 +107,6 @@ class NetworkEvaluator:
         return _masked_softmax_dict(logits[0].cpu(), indices)
 
 
-def _sample_index(distribution: dict[int, float], rng: random.Random) -> int:
-    keys = list(distribution.keys())
-    weights = [max(distribution[k], 0.0) for k in keys]
-    total = sum(weights)
-    if total <= 0.0:
-        return rng.choice(keys)
-    return rng.choices(keys, weights=weights, k=1)[0]
-
-
 @dataclass
 class LearnedAgent:
     """Network-backed SM-MCTS agent, conforming to `agents.base.Agent`
@@ -137,14 +133,11 @@ class LearnedAgent:
         )
         stats = root.white if color is Color.WHITE else root.black
         assert stats is not None, "search must expand the root before playing"
-        a1_index = _sample_index(stats.average_strategy(), rng)
+        a1_index = sample_index(stats.average_strategy(), rng)
         first = stats.actions[a1_index]
 
         slot2_dist = self.evaluator.slot2_prior(
             root.context, color, state, ruleset, a1_index, first
         )
-        a2_index = _sample_index(slot2_dist, rng)
-        if a2_index == NO_SECOND_INDEX:
-            return (first,)
-        slot2_actions, _ = slot2_legal_actions(state, color, ruleset, first)
-        return (first, slot2_actions[a2_index])
+        a2_index = sample_index(slot2_dist, rng)
+        return decode_program(first, a2_index, state, color, ruleset)

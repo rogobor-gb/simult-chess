@@ -35,6 +35,8 @@ programs, so a slot-2 logit vector has ``SLOT_SIZE + 1`` entries.
 
 from __future__ import annotations
 
+import random
+
 from simult_chess.agents.candidates import (
     cancel_candidates,
     exhaustive_move_and_castle_candidates,
@@ -262,3 +264,31 @@ def slot2_legal_actions(
             if is_legal_program(state, program, color, ruleset):
                 _register(result, state, second)
     return result, single_action_legal
+
+
+def sample_index(distribution: dict[int, float], rng: random.Random) -> int:
+    """Sample a grid index from a ``index -> probability`` distribution
+    (negative weights clamped to 0; falls back to a uniform choice over the
+    keys if all weights are non-positive). The one sampling routine shared by
+    `learn.search`, `learn.agent`, and `learn.selfplay`, so their random
+    draws stay consistent."""
+    keys = list(distribution.keys())
+    weights = [max(distribution[k], 0.0) for k in keys]
+    total = sum(weights)
+    if total <= 0.0:
+        return rng.choice(keys)
+    return rng.choices(keys, weights=weights, k=1)[0]
+
+
+def decode_program(
+    first: Action, second_index: int, state: State, color: Color, ruleset: RuleSet
+) -> Program:
+    """Decode a sampled ``(first, second_index)`` pair into a concrete
+    `Program`: `second_index == NO_SECOND_INDEX` yields the single-action
+    program, otherwise looks the second action up via `slot2_legal_actions`.
+    The shared decode both `learn.agent` and `learn.selfplay` use, so the two
+    callers of the search's sampled indices can't drift apart."""
+    if second_index == NO_SECOND_INDEX:
+        return (first,)
+    slot2_actions, _ = slot2_legal_actions(state, color, ruleset, first)
+    return (first, slot2_actions[second_index])
