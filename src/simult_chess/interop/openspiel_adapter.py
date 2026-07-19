@@ -155,16 +155,25 @@ def _exhaustive_reserve_candidates(state: State, color: Color) -> list[Action]:
     """Every individually-admissible Reserve action for `color` (spec §4.3).
     Identical to `agents.candidates.reserve_candidates`; re-derived here
     (not imported) so this module's enumeration is self-contained and
-    reviewable as one exhaustive-by-construction unit."""
+    reviewable as one exhaustive-by-construction unit.
+
+    Builds one `occupant` lookup up front (see `reserve_candidates`'s own
+    docstring for why: the convenience `capturing_pattern_trajectory`
+    wrapper would otherwise rebuild it from `state.board` on every one of
+    this function's O(defenders x proteges) iterations)."""
     candidates: list[Action] = []
+    occupant = geometry.occupant_lookup(state.board)
     for defender in state.board:
         if defender.color is not color or defender in state.cooldown:
             continue
+        origin = state.board[defender]
         for protege in state.board:
             if protege.color is not color or protege is defender:
                 continue
             target = state.board[protege]
-            pattern = geometry.capturing_pattern_trajectory(state, defender, target)
+            pattern = geometry.capturing_pattern_trajectory_at(
+                defender.typ, defender.color, origin, target, occupant
+            )
             if pattern is not None:
                 candidates.append(Reserve(defender=defender, protege=protege))
     return candidates

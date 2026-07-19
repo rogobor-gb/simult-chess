@@ -80,16 +80,28 @@ def exhaustive_move_and_castle_candidates(state: State, color: Color) -> list[Ac
 
 
 def reserve_candidates(state: State, color: Color) -> list[Action]:
-    """Every individually-admissible Reserve action for `color` (spec §4.3)."""
+    """Every individually-admissible Reserve action for `color` (spec §4.3).
+
+    Builds one `occupant` lookup up front and calls the lower-level
+    `capturing_pattern_trajectory_at` directly, rather than the convenience
+    `capturing_pattern_trajectory(state, ...)` wrapper, which would rebuild
+    that same lookup from `state.board` on every one of this function's
+    O(defenders x proteges) iterations -- a real, measured hot path once a
+    caller runs this many times per move decision (Phase 13b's search calls
+    it once per simulation, unlike a single stdlib-agent decision)."""
     candidates: list[Action] = []
+    occupant = geometry.occupant_lookup(state.board)
     for defender in state.board:
         if defender.color is not color or defender in state.cooldown:
             continue
+        origin = state.board[defender]
         for protege in state.board:
             if protege.color is not color or protege is defender:
                 continue
             target = state.board[protege]
-            pattern = geometry.capturing_pattern_trajectory(state, defender, target)
+            pattern = geometry.capturing_pattern_trajectory_at(
+                defender.typ, defender.color, origin, target, occupant
+            )
             if pattern is not None:
                 candidates.append(Reserve(defender=defender, protege=protege))
     return candidates
