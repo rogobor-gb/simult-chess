@@ -86,11 +86,11 @@ from simult_chess.core.types import (
     Move,
     PieceType,
     Program,
-    Reservation,
     Reserve,
     Square,
     State,
 )
+from simult_chess.interop import encoding
 from simult_chess.referee.setup import standard_starting_state
 from simult_chess.rules.ruleset import RuleSet
 
@@ -98,7 +98,6 @@ _NUM_PLAYERS = 2
 _MAX_DISTINCT_ACTIONS = 50_000
 _MAX_GAME_LENGTH = 500  # matches harness/selfplay.py's own default cap
 
-_PIECE_TYPES: tuple[PieceType, ...] = ("p", "n", "b", "r", "q", "k")
 _PROMOTABLE: tuple[PieceType, ...] = ("n", "b", "r", "q")
 _LAST_RANK = {Color.WHITE: 7, Color.BLACK: 0}
 _CASTLE_SIDES: tuple[CastleSide, CastleSide] = ("king", "queen")
@@ -369,8 +368,8 @@ class SimultChessObserver:
     in this module's docstring."""
 
     # 12 board + 1 cooldown + 4 reservation-actor + 4 reservation-pairing (D5).
-    _NUM_PLANES = len(_PIECE_TYPES) * _NUM_PLAYERS + 1 + 4 + 4
-    _NUM_SCALARS = 7
+    _NUM_PLANES = encoding.NUM_PLANES
+    _NUM_SCALARS = encoding.NUM_SCALARS
 
     def __init__(self, params: object) -> None:
         if params:
@@ -384,68 +383,11 @@ class SimultChessObserver:
 
     def set_from(self, state: SimultChessState, player: int) -> None:
         del player  # perfect information: the tensor is player-independent
-        planes = self.dict["planes"]
-        scalars = self.dict["scalars"]
-        planes.fill(0)
-        native = state.state
-
-        plane_of: dict[tuple[Color, PieceType], int] = {}
-        index = 0
-        for color in (Color.WHITE, Color.BLACK):
-            for piece_type in _PIECE_TYPES:
-                plane_of[(color, piece_type)] = index
-                index += 1
-        cooldown_plane = index
-        index += 1
-        white_defender_plane, white_protege_plane = index, index + 1
-        black_defender_plane, black_protege_plane = index + 2, index + 3
-        index += 4
-        white_dq_dfile_plane, white_dq_drank_plane = index, index + 1
-        black_dq_dfile_plane, black_dq_drank_plane = index + 2, index + 3
-
-        for token, square in native.board.items():
-            plane = plane_of[(token.color, token.typ)]
-            planes[plane, square.rank, square.file] = 1.0
-            if token in native.cooldown:
-                planes[cooldown_plane, square.rank, square.file] = 1.0
-
-        # oldest-per-defender-square reservation, for the pairing planes (D5):
-        # if a square defends several proteges (spec R-multi-out), encode the
-        # offset to the OLDEST active one, matching R-multi-in's firing order.
-        pairing_src: dict[tuple[bool, Square], Reservation] = {}
-        for reservation in (*native.reservations_white, *native.reservations_black):
-            defender_square = native.board.get(reservation.defender)
-            protege_square = native.board.get(reservation.protege)
-            is_white = reservation.defender.color is Color.WHITE
-            defender_plane = white_defender_plane if is_white else black_defender_plane
-            protege_plane = white_protege_plane if is_white else black_protege_plane
-            if defender_square is not None:
-                planes[defender_plane, defender_square.rank, defender_square.file] = 1.0
-            if protege_square is not None:
-                planes[protege_plane, protege_square.rank, protege_square.file] = 1.0
-            if defender_square is not None and protege_square is not None:
-                key = (is_white, defender_square)
-                current = pairing_src.get(key)
-                if current is None or reservation.age < current.age:
-                    pairing_src[key] = reservation
-
-        for (is_white, defender_square), reservation in pairing_src.items():
-            protege_square = native.board[reservation.protege]
-            dfile = (protege_square.file - defender_square.file) / 7.0
-            drank = (protege_square.rank - defender_square.rank) / 7.0
-            dfile_plane = white_dq_dfile_plane if is_white else black_dq_dfile_plane
-            drank_plane = white_dq_drank_plane if is_white else black_dq_drank_plane
-            planes[dfile_plane, defender_square.rank, defender_square.file] = dfile
-            planes[drank_plane, defender_square.rank, defender_square.file] = drank
-
-        rights = native.bookkeeping.castling_rights
-        scalars[0] = float(rights.white_kingside)
-        scalars[1] = float(rights.white_queenside)
-        scalars[2] = float(rights.black_kingside)
-        scalars[3] = float(rights.black_queenside)
-        scalars[4] = float(native.bookkeeping.no_progress_counter)
-        scalars[5] = float(native.bookkeeping.phase_index % 2)
-        scalars[6] = float(state.ruleset.horizon)
+        # Delegate to the pyspiel-free source-of-truth encoder (Phase 13b, D5),
+        # writing directly into this observer's persistent tensor buffer.
+        encoding.fill_planes_scalars(
+            self.dict["planes"], self.dict["scalars"], state.state, state.ruleset
+        )
 
     def string_from(self, state: SimultChessState, player: int) -> str:
         del player
