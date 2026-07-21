@@ -124,6 +124,42 @@ def test_train_step_moves_a_cpu_net_to_the_target_device() -> None:
     assert next(net.parameters()).device.type == "mps"
 
 
+@pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="requires an MPS device"
+)
+def test_load_checkpoint_moves_optimizer_state_to_device(tmp_path: object) -> None:
+    # Regression test for a real bug the Stage-F full run hit on resume: a
+    # checkpoint saved from an MPS-placed net/optimizer is always read back
+    # via map_location="cpu" (deliberately, for portability), so a resumed
+    # Adam optimizer's exp_avg/exp_avg_sq momentum buffers start on CPU.
+    # net.to(device) alone doesn't fix this -- it moves the module's own
+    # parameters, not an externally-held optimizer's internal state -- so
+    # without load_checkpoint's own device-aware fixup, the very first
+    # optimizer.step() after resume crashes with an MPS/CPU tensor mismatch,
+    # exactly as it did during the actual run.
+    from pathlib import Path
+
+    mps = torch.device("mps")
+    path = Path(str(tmp_path)) / "ckpt.pt"
+
+    net = _tiny_net()
+    optimizer = make_optimizer(net, TrainConfig())
+    train_step(net, optimizer, _buffer_from_games(1).sample(4, random.Random(0)), mps)
+    save_checkpoint(path, net, optimizer, step=1)
+
+    net2 = _tiny_net()
+    optimizer2 = make_optimizer(net2, TrainConfig())
+    load_checkpoint(path, net2, optimizer2, device=mps)
+
+    for state in optimizer2.state.values():
+        for value in state.values():
+            if isinstance(value, torch.Tensor):
+                assert value.device.type == "mps"
+
+    # The real regression: a second training step must not crash.
+    train_step(net2, optimizer2, _buffer_from_games(1).sample(4, random.Random(1)), mps)
+
+
 def test_checkpoint_round_trip_preserves_weights_and_step(tmp_path: object) -> None:
     from pathlib import Path
 

@@ -212,13 +212,37 @@ def load_checkpoint(
     path: Path,
     net: SimultChessNet,
     optimizer: torch.optim.Optimizer | None = None,
+    *,
+    device: torch.device | None = None,
 ) -> int:
-    """Load a checkpoint into `net` (and `optimizer`, if given) in place.
-    Returns the saved step count."""
+    """Load a checkpoint into `net` (and `optimizer`, if given) in place, then
+    move both to `device` if given. Returns the saved step count.
+
+    Always reads the file via `map_location="cpu"` (portable regardless of
+    which device the checkpoint was saved from -- e.g. loading an MPS-saved
+    checkpoint on a machine without MPS must still work), so `net` and the
+    optimizer's restored state start on CPU regardless of `device`.
+    `net.to(device)` alone is not enough to fix this on its own: it moves
+    the module's own parameters, but an *externally held* `Optimizer`'s
+    internal per-parameter state (Adam's `exp_avg`/`exp_avg_sq` momentum
+    buffers) isn't part of any `nn.Module` and is never touched by a
+    module's own `.to()` -- so without the explicit loop below, a resumed
+    Adam optimizer keeps its momentum tensors on CPU forever, silently
+    mismatched against the (now-moved) model parameters on the very first
+    `optimizer.step()` after resume. Found via the Stage-F full run: it
+    crashed with exactly this mismatch on the first training step after
+    resuming from a checkpoint on this machine's MPS device."""
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     net.load_state_dict(checkpoint["model"])
+    if device is not None:
+        net.to(device)
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])
+        if device is not None:
+            for state in optimizer.state.values():
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        state[key] = value.to(device)
     step: int = checkpoint["step"]
     return step
 
