@@ -477,22 +477,36 @@ Every `[K]` invariant is coupled to a `RuleSet` parameter. Changing a parameter 
 variant **requires** editing the coupled invariants in lockstep; the harness reads the
 parameter, never a literal.
 
-| `RuleSet` parameter | v1 value | Coupled invariants | Effect if changed |
-|---|---|---|---|
-| `N` (actions/phase) | `2` | L1 | Budget bound; branching (§8.4). |
-| `H` (no-progress horizon) | `50` | WF7, T4 | Draw horizon; convertibility (§8.3). |
-| `recapture_cooldown` | `on` | R13 | Whether recapturers enter $C'$. |
-| `cancellation_enabled` | `on` | R17, (L6) | If `off`: reject `Cancel` at L6; void R17; defense irrevocable. |
-| `pawn_same_square_fizzle_scope` | `both_pawns` | R2 | Mixed convergence becomes (V)-annihilation vs. fizzle. |
-| `annihilation_reading` | `B` (priority pairing) | R4 | Alt: timed one-tick model (§13.2). |
-| `intermezzo_reading` | `(ii)` (unconditional) | R7, M4 | Alt: `(i)` attacker-sequenced (§13.4) — flips M4 from *true* to *deliberately order-dependent*. |
+| `RuleSet` parameter | v1.1 value | Status | Coupled invariants | Effect if changed | Named variant |
+|---|---|---|---|---|---|
+| `N` (actions/phase) | `2` | `[FROZEN v1.1]` | L1 | Budget bound; branching (§8.4). | — (not campaigned) |
+| `H` (no-progress horizon) | `50` | `[FROZEN v1.1]` | WF7, T4 | Draw horizon; convertibility (§8.3). | `horizon_30`, `horizon_80` |
+| `recapture_cooldown` | `on` | `[FROZEN v1.1]` | R13 | Whether recapturers enter $C'$. | `no_recapture_cooldown` |
+| `cancellation_enabled` | `on` | `[FROZEN v1.1]` | R17, (L6) | If `off`: reject `Cancel` at L6; void R17; defense irrevocable. | `irrevocable_defense` |
+| `pawn_same_square_fizzle_scope` | `both_pawns` | `[FROZEN v1.1]` | R2 | Mixed convergence becomes (V)-annihilation vs. fizzle. | `any_same_square_fizzle` |
+| `annihilation_reading` | `B` (priority pairing) | `[FROZEN v1.1]` | R4 | Alt: timed one-tick model (§13.2). | — (unimplemented) |
+| `intermezzo_reading` | `(ii)` (unconditional) | `[FROZEN v1.1]` | R7, M4 | Alt: `(i)` attacker-sequenced (§13.4) — flips M4 from *true* to *deliberately order-dependent*. | `attacker_sequenced_intermezzo` |
 
-**Both spec items resolved 2026-07-14 (see changelog; not `[OPEN]` any more):**
-`cancellation_enabled` (spec §9, retained — A1) and `pawn_same_square_fizzle_scope`
-(spec §13, `both_pawns` confirmed — A2). Both fields' *values* were already the v1
-defaults before the ruling; only their epistemic status moved from `[OPEN]`/`[C,
-confirm]` to resolved `[C]`. They remain explicit `RuleSet` fields regardless, so a
-future re-ruling is still a one-line change, not a code hunt.
+**Frozen 2026-07-24 (Gate 14, maintainer rulings C1–C3; spec §13 and changelog).** The
+whole row set above is identified by one fingerprint,
+
+> `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c`
+
+— hex SHA-256 over the rule-bearing fields in canonical (name-sorted) order,
+`RuleSet.fingerprint()`. **The fingerprint is this table's executable form.** Since the
+harness reads the `RuleSet` and never a literal, a variant run stays checkable; since
+game records carry the fingerprint, a *change* to any row above is detectable rather
+than silent — a record made under other rules refuses to replay instead of quietly
+replaying differently. The freeze is **provisional** (C3, extending A5): it fixes a
+versioned default, and asserts nothing about equilibrium balance. Every declined value
+is registered in `rules/variants.py` (last column) and reachable via `--variant`, so
+exercising an alternative is still a one-line change, not a fork.
+
+**Earlier resolution, retained for the record (2026-07-14):** `cancellation_enabled`
+(spec §9, retained — A1) and `pawn_same_square_fizzle_scope` (spec §13, `both_pawns`
+confirmed — A2) moved from `[OPEN]`/`[C, confirm]` to `[C]` with their *values*
+unchanged. The 2026-07-24 freeze likewise changed no value: it is a status change on
+every row, which is precisely what makes it safe to bind downstream artifacts to it.
 
 ---
 

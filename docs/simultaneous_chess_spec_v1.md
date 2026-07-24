@@ -22,6 +22,25 @@ see `docs/DEVELOPMENT_addendum_v1.1.md` §A):
   separately declares an action for that same flank rook — this changes the legal-
   program set relative to v1.0 (A3).
 
+**Phase 14 — provisional parameter freeze v1.1 (2026-07-24).** Maintainer rulings
+C1–C3 (`docs/DEVELOPMENT_roadmap_v2.md` §B) close Gate 11b. Every `RuleSet` field is
+**frozen at its Phase 11b campaign baseline** — the freeze is a no-op on values and
+changes only their status, from **[C]** to **[FROZEN v1.1]** (§13). The frozen defaults
+carry the fingerprint
+
+> `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c`
+
+(hex SHA-256 of the canonical form; `RuleSet.fingerprint()`, `rules/ruleset.py`), which
+game records, the network handshake, and the release deposit all bind to. The freeze is
+**provisional** (C3, extending A5): it asserts a *versioned default*, not equilibrium
+balance — every campaign statistic is a functional of the state distribution induced by
+those agents. What the fingerprint buys is that a later revision is *detectable* rather
+than silent. C1 declined `pawn_same_square_fizzle_scope = "any_same_square"` despite it
+being the largest measured effect (+0.140 draw rate), on mechanism: its draws come from
+games grinding into the $H$ wall, not from balance. C2 froze the remaining four arms at
+baseline. Every declined arm value stays playable by name (`rules/variants.py`,
+`--variant`) — a variant is a `RuleSet`, never a fork.
+
 **Phase 11a (2026-07-17).** §13.4 added: the full formal specification (with
 well-definedness lemma and a re-derived worked example) of the attacker-sequenced
 intermezzo, Reading (i) — previously a one-line deferred-lever mention only.
@@ -294,11 +313,16 @@ With $N=2$, per-player declarations scale as $\binom{b+d}{2}$ where $b\approx 35
 
 ---
 
-## 9. Cancellation of reservations **[C — retained, v1.1]**
+## 9. Cancellation of reservations **[FROZEN v1.1]**
 
 **Resolved (2026-07-14):** retained as the canonical v1 default; `cancellation_enabled
-= True`. The irrevocable-defense alternative (drop cancellation entirely) remains a
-documented, exercisable `RuleSet` variant, not a candidate to displace the default.
+= True`. **Frozen (2026-07-24, ruling C2):** unchanged at `True` in the provisional
+v1.1 freeze (§13). The irrevocable-defense alternative (drop cancellation entirely)
+remains a registered, playable variant — `irrevocable_defense` in `rules/variants.py` —
+not a candidate to displace the default. Note that the Phase 11b A/B arm for this
+parameter is a **confirmed null by construction**, not evidence of inertness: no agent
+in the campaign roster can declare a `Cancel` at all, so the arm never exercised the
+rule. Re-testing it is a task for agents that can (`reports/campaign_v1.md`).
 
 Cancellation is *useless unless recapture is automatic* — and it is (the reservation is a genuine pre-commitment "if $Q$ is taken, $D$ *will* recapture"). Given automaticity, cancellation earns its keep in exactly one situation: the committed recapture has become **bad** (it would drag $D$ into a fork, or the exchange has turned unfavorable) and the player wants $D$ to stay put *without executing it*. Moving $D$ also cancels the reservation but costs a slot and relocates the piece; cancellation drops the commitment while $D$ stays. Because of simultaneity it is a **blind withdrawal** — committed in a decision phase before seeing whether the opponent triggers it — a Schelling-style deterrence/commitment lever (keep the reservation as a visible deterrent vs. withdraw to dodge a forced bad recapture). Under the mandatory-move rule (L2), cancellation cannot be abused as a covert pass, so v1 makes it **free and slot-less** (apply at closure, §6.7). *Alternative:* drop cancellation entirely, making the defense irrevocable and shrinking the state — coherent and simpler; the designer's call.
 
@@ -358,10 +382,22 @@ Multiple reservations are **core** to v1 (a loss of tempo traded for solidity). 
 
 ## 13. Parameters, conventions, and open items
 
-**Parameters (tunable by playtest).**
-- $N$: actions per phase. **v1: $N=2$**, held as a parameter (branching and per-phase variance arguments favor the minimum $N$ exhibiting all rule interactions, §8.4). $N\ge 3$ and larger boards deferred to variants.
-- $H$: no-progress horizon (§10), a balance parameter controlling convertibility of material (§8.3). Placeholder $H=50$.
-- Recapture cooldown (§7): default **on**; candidate to switch off for faster play.
+**Parameters — all [FROZEN v1.1] (Gate 14, rulings C1–C3 of 2026-07-24; see
+changelog).** "Frozen" means *versioned*, not *proven optimal*: the values are those the
+Phase 11b campaign ran under, and the freeze is provisional pending re-estimation under
+stronger agents. The whole set is identified by the fingerprint
+`bf2bb9dab0f0…` (`RuleSet.fingerprint()`); every declined value below remains playable
+as a named variant (`rules/variants.py`), so no alternative requires a fork.
+
+| Parameter | Frozen value | Status | Declined alternative (variant name) |
+|---|---|---|---|
+| $N$, actions per phase | $2$ | **[FROZEN v1.1]** | $N\ge 3$ deferred to variants (§8.4); not campaigned |
+| $H$, no-progress horizon (§10) | $50$ | **[FROZEN v1.1]** (C2) | $30$ (`horizon_30`), $80$ (`horizon_80`) — both merely retrade horizon draws against mutual-king-loss draws |
+| Recapture cooldown (§7) | **on** | **[FROZEN v1.1]** (C2) | off (`no_recapture_cooldown`), the "faster play" candidate: +0.020 draw rate, at the campaign's ±0.019 MDE |
+| Cancellation (§9) | **on** | **[FROZEN v1.1]** (C2, was [C, retained] A1) | irrevocable defense (`irrevocable_defense`) — its null result is *by construction*: no campaign agent can declare a `Cancel` |
+| Pawn same-square fizzle scope (§6.2/6.5) | **both pawns** | **[FROZEN v1.1]** (C1, was [C, confirmed] A2) | any same square (`any_same_square_fizzle`) — the largest measured effect (+0.140 draw rate), declined on mechanism: horizon-attributed draws rise 0.311 → 0.719 |
+| Annihilation reading (§6.3) | **B**, declaration-priority | **[FROZEN v1.1]** | timed one-tick (§13.2) — declined for v1, *unimplemented*, so deliberately not a named variant |
+| Intermezzo reading (§6.4) | **(ii)**, unconditional | **[FROZEN v1.1]** (C2) | (i) attacker-sequenced (`attacker_sequenced_intermezzo`, §13.4) — +0.027 draw rate, just past MDE, with no shift in draw causes |
 
 **Conventions, resolved (rulings of 2026-07-14; see changelog).**
 - **[C, retained]** Cancellation retained as the v1 default (§9); irrevocable defense
@@ -373,7 +409,7 @@ Multiple reservations are **core** to v1 (a loss of tempo traded for solidity). 
 1. **Hidden information** (Ch. 11) — the intended second milestone.
 2. **Timed (one-tick-per-square) resolution** — distinguishes perpendicular crossings, enables in-phase interception/tempo; large edge-case surface.
 3. **Geometric conflict selection** — pair a multi-crossing mover with its *first* victim along the path; requires stable-matching with tie-breaks (rejected for v1 in favor of declaration-priority, §6.3).
-4. **Attacker-sequenced intermezzo (Reading (i))** — a leaner, order-dependent defense; specified in §13.4 below, to be A/B-tested against Reading (ii) (Phase 11 of `docs/DEVELOPMENT_addendum_v1.1.md`).
+4. **Attacker-sequenced intermezzo (Reading (i))** — a leaner, order-dependent defense; specified in §13.4 below. A/B-tested against Reading (ii) in Phase 11b and **declined** for the v1.1 default (ruling C2: +0.027 draw rate against a ±0.019 MDE, with no shift in the draw-cause breakdown); retained as the playable variant `attacker_sequenced_intermezzo`.
 5. **Trap reservations** — reserve a square against *any* arrival (not just defense of an owned piece); flagged as too random for v1.
 6. **$N\ge 3$, larger boards, reinstated en passant** — future variants.
 

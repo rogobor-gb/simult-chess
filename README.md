@@ -65,6 +65,24 @@ Both CLIs accept `--agent {human,random,greedy}` (net) or `--agent
 short text DSL — see `src/simult_chess/ui/notation.py`'s module docstring for
 the grammar (e.g. `Nf3`, `e4=Q`, `O-O`, `e3 def d4`, `cancel 0`).
 
+## Rules: the frozen defaults, and variants
+
+Play defaults to the **frozen provisional v1.1** rule set (`RuleSet()`), whose
+identity is its fingerprint — `bf2bb9dab0f0…`, a SHA-256 over the rule-bearing
+fields. Every rule value the Phase 11b campaign tested and the freeze declined
+stays playable *by name*, never by forking:
+
+```bash
+python -m simult_chess.ui.cli variants                       # list them
+python -m simult_chess.ui.cli hotseat --variant horizon_30   # play one
+```
+
+Both CLIs take `--variant`; each prints its rule set and fingerprint at start,
+which for a networked game is currently the manual cross-check that the two
+peers agree (the handshake that automates it is Phase 15a). "Frozen" means
+*versioned*, not *proven optimal* — see the freeze block at the top of
+[`reports/campaign_v1.md`](reports/campaign_v1.md) and §13 of the spec.
+
 ## Tests and sweeps
 
 ```bash
@@ -92,7 +110,7 @@ docstring for a `K`-game example against `agents/random_legal.py` and
 ```
 src/simult_chess/
 ├── core/        # state algebra, geometry oracle, legality L(s,π), Φ
-├── rules/       # RuleSet — every [K] (convention-tied) invariant's parameter
+├── rules/       # RuleSet (frozen v1.1 + fingerprint), named variants, stage registry
 ├── invariants/  # WF/L/R/T/M checks + severity classification
 ├── referee/     # standard setup, commit-reveal observation channel, match loop
 ├── agents/      # Agent protocol + random_legal, greedy
