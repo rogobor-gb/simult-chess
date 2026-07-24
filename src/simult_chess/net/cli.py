@@ -20,6 +20,7 @@ from simult_chess.net.session import run_online_match
 from simult_chess.net.transport import Peer, connect_peer, host_peer
 from simult_chess.referee.setup import standard_starting_state
 from simult_chess.rules.ruleset import RuleSet
+from simult_chess.rules.variants import BASELINE_NAME, get_variant, variant_names
 from simult_chess.ui.session import prompt_program
 
 _AGENTS: dict[str, Agent] = {"random": random_legal_program, "greedy": greedy_program}
@@ -47,6 +48,15 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--color", choices=("white", "black"), required=True)
         sub.add_argument("--agent", choices=(*_AGENTS, "human"), default="human")
         sub.add_argument("--seed", type=int, default=0)
+        sub.add_argument(
+            "--variant",
+            choices=variant_names(),
+            default=BASELINE_NAME,
+            help="rule set to play (default: the frozen provisional v1.1 "
+            "defaults). Both peers must pass the same one -- until the Phase "
+            "15a handshake cross-checks the fingerprint, the printed digest "
+            "is the manual check",
+        )
 
     return parser
 
@@ -54,7 +64,8 @@ def _build_parser() -> argparse.ArgumentParser:
 async def _amain(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     state = standard_starting_state()
-    ruleset = RuleSet()
+    ruleset = get_variant(args.variant)
+    print(f"rules: {args.variant} [{ruleset.fingerprint()[:12]}]")
     color = Color.WHITE if args.color == "white" else Color.BLACK
     program_source: Agent = (
         _human_program_source if args.agent == "human" else _AGENTS[args.agent]

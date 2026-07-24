@@ -4,6 +4,7 @@ import pytest
 
 import simult_chess.ui.session as session_module
 from simult_chess.core.types import Color
+from simult_chess.rules.variants import BASELINE_NAME, get_variant, variant_names
 from simult_chess.ui import cli
 
 
@@ -18,6 +19,7 @@ def test_build_parser_agent_mode_defaults() -> None:
     assert args.human == "white"
     assert args.agent == "random"
     assert args.seed == 0
+    assert args.variant == BASELINE_NAME
 
 
 def test_build_parser_agent_mode_overrides() -> None:
@@ -66,3 +68,26 @@ def test_main_agent_mode_dispatches_with_chosen_color_and_agent(
     monkeypatch.setattr(session_module, "run_human_vs_agent", fake_run_human_vs_agent)
     assert cli.main(["agent", "--human", "black", "--agent", "greedy"]) == 0
     assert captured["human_color"] is Color.BLACK
+
+
+def test_variants_subcommand_lists_every_registered_variant(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["variants"]) == 0
+    listing = capsys.readouterr().out
+    for name in variant_names():
+        assert name in listing
+
+
+def test_variant_flag_selects_the_named_ruleset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate 14: a declined arm value is *playable*, not merely registered."""
+    captured: dict[str, object] = {}
+
+    def fake_run_hot_seat(state: object, ruleset: object, **_kwargs: object) -> None:
+        captured["ruleset"] = ruleset
+
+    monkeypatch.setattr(session_module, "run_hot_seat", fake_run_hot_seat)
+    assert cli.main(["hotseat", "--variant", "any_same_square_fizzle"]) == 0
+    assert captured["ruleset"] == get_variant("any_same_square_fizzle")
