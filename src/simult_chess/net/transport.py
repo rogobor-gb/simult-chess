@@ -10,9 +10,24 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
-from simult_chess.net.protocol import ProtocolError
+from simult_chess.net.protocol import ProtocolError, TransportTimeout
+
+
+class Transport(Protocol):
+    """The message channel `net.session` needs: send, timed recv, close.
+
+    `Peer` (a real TCP connection) is the production implementation; a test
+    can supply an in-memory duplex satisfying the same three methods, so the
+    session loop never has to open a socket to be exercised.
+    """
+
+    async def send(self, message: dict[str, Any]) -> None: ...
+
+    async def recv(self, *, timeout: float | None = None) -> dict[str, Any]: ...
+
+    async def close(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -33,7 +48,7 @@ class Peer:
         try:
             line = await asyncio.wait_for(self.reader.readline(), timeout=timeout)
         except asyncio.TimeoutError as exc:
-            raise ProtocolError(f"peer did not respond within {timeout}s") from exc
+            raise TransportTimeout(f"peer did not respond within {timeout}s") from exc
         if not line:
             raise ProtocolError("peer closed the connection")
         result: dict[str, Any] = json.loads(line.decode())
