@@ -1,8 +1,37 @@
 # Campaign v1 — Phase 11b pre-registered empirical report
 
-Generated 2026-07-17T20:21:14.936269+00:00. 45000 games total. Estimands, statistics, and sample sizes were declared before any run (`docs/DEVELOPMENT_addendum_v1.1.md` §11b); every table below is traceable to the run-spec constants in `harness/campaign.py` (agent pair, `RuleSet` diff from baseline, seed range).
+Generated 2026-07-23T23:19:51.084814+00:00. 45000 games total. Estimands, statistics, and sample sizes were declared before any run (`docs/DEVELOPMENT_addendum_v1.1.md` §11b); every table below is traceable to the run-spec constants in `harness/campaign.py` (agent pair, `RuleSet` diff from baseline, seed range).
 
 > **Interpretive caveat.** All balance statistics here are functionals of the state distributions induced by *these agents*, not of equilibrium play. The freeze this report supports is therefore provisional by construction (ruling A5) and is re-estimated after Phase 13 under learned agents.
+
+## 0. Freeze block — provisional v1.1 (Gate 14, closes Gate 11b)
+
+**Status: PROVISIONAL** (maintainer ruling C3 of 2026-07-24, `docs/DEVELOPMENT_roadmap_v2.md` §B, extending ruling A5). The freeze asserts a *versioned default*, not equilibrium balance: every statistic below is a functional of the state distribution induced by the campaign's agents. Phase 13b did not produce agents strong enough for the post-learning re-estimation A5 anticipated, and four downstream phases bind to the defaults, so the freeze is taken on the evidence available and labelled accordingly. The fingerprint is what makes a later revision **detectable rather than silent**: a game record carries it, and replay refuses on mismatch.
+
+**Rulings.** C1: `pawn_same_square_fizzle_scope` frozen at `both_pawns` — the `any_same_square` arm is the largest effect in this report (+0.140 draw rate) and is declined on *mechanism*, since its draws come from games grinding into the `H` wall (horizon-attributed draws 0.311 → 0.719) rather than from balance. C2: the other four arms frozen at baseline; no arm's effect clears its MDE by enough to move a default, and the `cancellation_enabled` arm is a confirmed null *by construction* (see the usage caveat below).
+
+| `RuleSet` field | frozen value | status |
+|---|---|---|
+| `annihilation_reading` | `'B'` | `[FROZEN v1.1]` |
+| `cancellation_enabled` | `True` | `[FROZEN v1.1]` |
+| `horizon` | `50` | `[FROZEN v1.1]` |
+| `intermezzo_reading` | `'ii'` | `[FROZEN v1.1]` |
+| `n_actions` | `2` | `[FROZEN v1.1]` |
+| `pawn_same_square_fizzle_scope` | `'both_pawns'` | `[FROZEN v1.1]` |
+| `recapture_cooldown` | `True` | `[FROZEN v1.1]` |
+
+**Fingerprint.** `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c` — hex SHA-256 of the canonical form (domain prefix, then one `field=repr(value)` line per rule-bearing field in name order); `RuleSet().fingerprint()`, `rules/ruleset.py`.
+
+**Declined arm values remain playable** as named variants (`rules/variants.py`), so no alternative requires a fork:
+
+| variant | fingerprint | `RuleSet` diff from frozen |
+|---|---|---|
+| `irrevocable_defense` | `945dfb4268ee` | `cancellation_enabled=False` |
+| `attacker_sequenced_intermezzo` | `d51e5ee58dae` | `intermezzo_reading=i` |
+| `any_same_square_fizzle` | `17cbd1dc6bd9` | `pawn_same_square_fizzle_scope=any_same_square` |
+| `no_recapture_cooldown` | `c987fe6f6710` | `recapture_cooldown=False` |
+| `horizon_30` | `551f9c5d770e` | `horizon=30` |
+| `horizon_80` | `eeb83fc4c540` | `horizon=80` |
 
 ## 1–2. Tournament matrix: draw rate & phase-count distribution
 

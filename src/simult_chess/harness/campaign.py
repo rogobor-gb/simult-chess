@@ -52,6 +52,7 @@ from simult_chess.invariants.severity import severity_of
 from simult_chess.referee.serialize import public_position_key
 from simult_chess.referee.setup import standard_starting_state
 from simult_chess.rules.ruleset import RuleSet
+from simult_chess.rules.variants import BASELINE_NAME, VARIANTS
 from simult_chess.solver.agent import matrix_1ply
 from simult_chess.solver.stage_matrix import material_difference
 
@@ -502,6 +503,70 @@ def _aggregate(records: Sequence[GameRecord]) -> Aggregate:
     )
 
 
+def _render_freeze_block() -> list[str]:
+    """The Gate 14 freeze block, generated from `RuleSet` itself.
+
+    Deliberately not hand-written into the report: the frozen values, the
+    fingerprint, and the variant listing are read off the code, so the report
+    cannot come to claim a freeze the engine does not implement
+    (`tests/unit/test_ruleset_fingerprint.py` asserts the agreement in the
+    other direction).
+    """
+    frozen = RuleSet()
+    lines: list[str] = []
+    lines.append("## 0. Freeze block — provisional v1.1 (Gate 14, closes Gate 11b)\n")
+    lines.append(
+        "**Status: PROVISIONAL** (maintainer ruling C3 of 2026-07-24, "
+        "`docs/DEVELOPMENT_roadmap_v2.md` §B, extending ruling A5). The freeze "
+        "asserts a *versioned default*, not equilibrium balance: every "
+        "statistic below is a functional of the state distribution induced by "
+        "the campaign's agents. Phase 13b did not produce agents strong enough "
+        "for the post-learning re-estimation A5 anticipated, and four "
+        "downstream phases bind to the defaults, so the freeze is taken on the "
+        "evidence available and labelled accordingly. The fingerprint is what "
+        "makes a later revision **detectable rather than silent**: a game "
+        "record carries it, and replay refuses on mismatch.\n"
+    )
+    lines.append(
+        "**Rulings.** C1: `pawn_same_square_fizzle_scope` frozen at "
+        "`both_pawns` — the `any_same_square` arm is the largest effect in "
+        "this report (+0.140 draw rate) and is declined on *mechanism*, since "
+        "its draws come from games grinding into the `H` wall "
+        "(horizon-attributed draws 0.311 → 0.719) rather than from balance. "
+        "C2: the other four arms frozen at baseline; no arm's effect clears "
+        "its MDE by enough to move a default, and the `cancellation_enabled` "
+        "arm is a confirmed null *by construction* (see the usage caveat "
+        "below).\n"
+    )
+    lines.append("| `RuleSet` field | frozen value | status |")
+    lines.append("|---|---|---|")
+    for line in frozen.canonical_form().splitlines()[1:]:
+        name, value = line.split("=", 1)
+        lines.append(f"| `{name}` | `{value}` | `[FROZEN v1.1]` |")
+    lines.append("")
+    lines.append(
+        f"**Fingerprint.** `{frozen.fingerprint()}` — hex SHA-256 of the "
+        "canonical form (domain prefix, then one `field=repr(value)` line per "
+        "rule-bearing field in name order); `RuleSet().fingerprint()`, "
+        "`rules/ruleset.py`.\n"
+    )
+    lines.append(
+        "**Declined arm values remain playable** as named variants "
+        "(`rules/variants.py`), so no alternative requires a fork:\n"
+    )
+    lines.append("| variant | fingerprint | `RuleSet` diff from frozen |")
+    lines.append("|---|---|---|")
+    for name, variant in VARIANTS.items():
+        if name == BASELINE_NAME:
+            continue
+        lines.append(
+            f"| `{name}` | `{variant.ruleset.fingerprint()[:12]}` | "
+            f"`{_ruleset_diff(variant.ruleset)}` |"
+        )
+    lines.append("")
+    return lines
+
+
 def render_report(
     cache: dict[str, list[GameRecord]], run_specs: Sequence[RunSpec]
 ) -> str:
@@ -533,6 +598,8 @@ def render_report(
         "therefore provisional by construction (ruling A5) and is "
         "re-estimated after Phase 13 under learned agents.\n"
     )
+
+    lines.extend(_render_freeze_block())
 
     lines.append("## 1–2. Tournament matrix: draw rate & phase-count distribution\n")
     lines.append(
