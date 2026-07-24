@@ -60,6 +60,19 @@ python -m simult_chess.net.cli host --port 5000 --color white --agent human
 python -m simult_chess.net.cli connect --remote-host <host-ip> --port 5000 --color black --agent human
 ```
 
+Before phase 0 the two peers run a **handshake** that agrees the protocol and
+spec versions, the ruleset fingerprint, the initial position, and the phase
+limit, and *negotiates* colour — so two `--color white` peers get a playable
+assignment instead of a crash, and a fingerprint or spec mismatch aborts with a
+named error rather than a wrong game. During play a keepalive lets a side think
+as long as it likes without tripping a false timeout, while still detecting a
+genuinely dead peer; `--transport-timeout`, `--keepalive-interval`, and
+`--liveness-deadline` tune those bounds. At the prompt a human may type a
+program, `resign`, `abort`, `accept` (a standing draw offer), or prefix a
+program with `draw ` to offer one. A match ends with an outcome in
+`{white_wins, black_wins, draw}` and a separate reason (`regicide`,
+`resignation`, `draw_agreement`, `abort`, …).
+
 Both CLIs accept `--agent {human,random,greedy}` (net) or `--agent
 {random,greedy}` with `--human {white,black}` (ui). Programs are entered in a
 short text DSL — see `src/simult_chess/ui/notation.py`'s module docstring for
@@ -77,11 +90,11 @@ python -m simult_chess.ui.cli variants                       # list them
 python -m simult_chess.ui.cli hotseat --variant horizon_30   # play one
 ```
 
-Both CLIs take `--variant`; each prints its rule set and fingerprint at start,
-which for a networked game is currently the manual cross-check that the two
-peers agree (the handshake that automates it is Phase 15a). "Frozen" means
-*versioned*, not *proven optimal* — see the freeze block at the top of
-[`reports/campaign_v1.md`](reports/campaign_v1.md) and §13 of the spec.
+Both CLIs take `--variant`; each prints its rule set and fingerprint at start.
+For a networked game the handshake cross-checks that fingerprint automatically
+and aborts a mismatch by name, so both peers must pass the same `--variant`.
+"Frozen" means *versioned*, not *proven optimal* — see the freeze block at the
+top of [`reports/campaign_v1.md`](reports/campaign_v1.md) and §13 of the spec.
 
 ## Tests and sweeps
 
@@ -116,7 +129,7 @@ src/simult_chess/
 ├── agents/      # Agent protocol + random_legal, greedy
 ├── harness/     # seeded self-play sweeps, violation reports
 ├── ui/          # notation DSL, ASCII board render, hot-seat/human-vs-agent sessions
-├── net/         # commit-reveal protocol, asyncio TCP transport, online session
+├── net/         # handshake, commit-reveal + match services, keepalive, TCP transport
 ├── solver/      # stage-matrix/LP layer (needs the solver extra): matrix_1ply
 └── interop/     # OpenSpiel/pyspiel adapter (needs the openspiel extra)
 
