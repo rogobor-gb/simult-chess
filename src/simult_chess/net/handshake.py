@@ -23,7 +23,6 @@ strings, so it stays a pure transport concern.
 
 from __future__ import annotations
 
-import hashlib
 import random
 from dataclasses import dataclass
 from typing import Any
@@ -36,8 +35,24 @@ from simult_chess.net.protocol import (
     ProtocolError,
 )
 from simult_chess.net.transport import Transport
-from simult_chess.referee.serialize import public_position_key
+from simult_chess.referee.serialize import state_hash
 from simult_chess.rules.ruleset import RuleSet
+
+# Re-exported so `net.session` and net tests keep importing `state_hash` from
+# here; the canonical implementation now lives in `referee.serialize` (Phase
+# 15d) so the game record hashes states identically to the handshake.
+__all__ = [
+    "ColorNegotiationError",
+    "Handshake",
+    "HandshakeError",
+    "InitialStateMismatch",
+    "MaxPhasesMismatch",
+    "ProtocolVersionMismatch",
+    "RulesetMismatch",
+    "SpecVersionMismatch",
+    "perform_handshake",
+    "state_hash",
+]
 
 _NONCE_BITS = 64
 
@@ -72,15 +87,6 @@ class MaxPhasesMismatch(HandshakeError):
 
 class ColorNegotiationError(HandshakeError):
     """Colour could not be assigned (equal proposals, equal nonces)."""
-
-
-def state_hash(state: State) -> str:
-    """Hex SHA-256 of a state's public position key (board + cooldown).
-
-    Shared by the handshake (initial-state agreement) and the per-phase
-    divergence check, so both sides hash a state the same way.
-    """
-    return hashlib.sha256(repr(public_position_key(state)).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

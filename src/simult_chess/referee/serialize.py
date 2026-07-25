@@ -9,11 +9,22 @@ square, or in dormant (unfired) reservations.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from simult_chess.core.types import Reservation, State
 
 PublicPositionKey = tuple[tuple[int, int, str, str, bool], ...]
+
+
+def state_hash(state: State) -> str:
+    """Hex SHA-256 of a state's public position key (board + cooldown).
+
+    The one canonical way to hash a state, shared by the network handshake and
+    per-phase divergence check (`net`) and the game record (`referee.record`),
+    so every layer that fingerprints a position agrees byte-for-byte.
+    """
+    return hashlib.sha256(repr(public_position_key(state)).encode()).hexdigest()
 
 
 def public_position_key(state: State) -> PublicPositionKey:

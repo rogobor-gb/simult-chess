@@ -8,7 +8,7 @@ from typing import Literal
 
 from simult_chess.agents.base import Agent
 from simult_chess.core.phi import PhiTrace, phi
-from simult_chess.core.types import Color, State
+from simult_chess.core.types import Color, Program, State
 from simult_chess.referee.observe import ObservationChannel
 from simult_chess.rules.ruleset import RuleSet
 
@@ -19,12 +19,18 @@ MatchOutcome = Literal[
 
 @dataclass(frozen=True, slots=True)
 class PhaseRecord:
-    """One resolved phase's event log entry (spec §6.7's emit_event_log)."""
+    """One resolved phase's event log entry (spec §6.7's emit_event_log).
+
+    Carries the two declared programs (Phase 15d) so the phase can be written
+    to a `.scn` game record.
+    """
 
     state_before: State
     state_after: State
     outcome: str
     trace: PhiTrace
+    program_white: Program
+    program_black: Program
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,8 @@ def play_match(
                 state_after=result.state,
                 outcome=result.outcome,
                 trace=result.trace,
+                program_white=revealed_white,
+                program_black=revealed_black,
             )
         )
         state = result.state

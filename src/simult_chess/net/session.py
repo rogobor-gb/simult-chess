@@ -67,6 +67,7 @@ from simult_chess.net.protocol import (
     serialize_program,
 )
 from simult_chess.net.transport import Transport
+from simult_chess.referee.record import GamePhase
 from simult_chess.referee.serialize import public_position_key
 from simult_chess.rules.ruleset import RuleSet
 
@@ -165,12 +166,16 @@ class OnlineMatchResult:
     """The outcome of one complete online match, from this peer's view.
 
     ``outcome`` is the competitive result (payoff domain, spec §10);
-    ``termination_reason`` is why the game ended (session metadata).
+    ``termination_reason`` is why the game ended (session metadata); ``phases``
+    are the resolved phases with their programs, ready to write to a `.scn`
+    game record (Phase 15d) — empty on a game that ended before any phase
+    resolved (an immediate resign/abort).
     """
 
     final_state: State
     outcome: MatchOutcome
     termination_reason: TerminationReason
+    phases: tuple[GamePhase, ...] = ()
 
 
 def _color_wins(color: Color) -> MatchOutcome:
@@ -377,13 +382,15 @@ async def _exchange_reveal_and_resolve(
     *,
     phase: int,
     transport_timeout: float,
-) -> tuple[State, MatchOutcome | None, TerminationReason | None]:
+) -> tuple[State, _Terminal | None, GamePhase | None]:
     """Reveal, verify, adjudicate legality, resolve Φ, and cross-check the state.
 
-    Returns ``(new_state, None, None)`` for an ongoing game, or
-    ``(new_state, outcome, reason)`` for a terminal one. Both the reveal and the
-    ack are messages the peer should send *immediately* once both committed, so
-    they are bounded by ``transport_timeout`` (decision time is already spent).
+    Returns ``(new_state, terminal, phase)``: ``terminal`` is the match outcome
+    if the game ended this phase (else ``None``); ``phase`` is the resolved
+    phase's record entry, or ``None`` on the illegal-program forfeit path (no
+    phase actually resolved). Both the reveal and the ack are messages the peer
+    should send *immediately* once both committed, so they are bounded by
+    ``transport_timeout`` (decision time is already spent).
     """
     remote_color = local_color.opponent
     await peer.send(
@@ -413,7 +420,7 @@ async def _exchange_reveal_and_resolve(
         state, local_commit.program, remote_program, local_color, ruleset
     )
     if forfeit is not None:
-        return state, forfeit.outcome, forfeit.reason
+        return state, forfeit, None
 
     white, black = _ordered(local_color, local_commit.program, remote_program)
     result = phi(state, white, black, ruleset)
@@ -426,10 +433,11 @@ async def _exchange_reveal_and_resolve(
     if remote_ack["state_hash"] != local_hash:
         raise ProtocolError(f"phase {phase}: post-phase state diverged from peer")
 
+    game_phase = GamePhase(white, black, result.outcome)
     if result.outcome == "ongoing":
-        return result.state, None, None
+        return result.state, None, game_phase
     reason = _terminal_reason(result.state, ruleset)
-    return result.state, result.outcome, reason
+    return result.state, _Terminal(result.outcome, reason), game_phase
 
 
 def _ordered(
@@ -526,6 +534,7 @@ async def run_online_match(
     local_offer_standing = False
     outcome: MatchOutcome = "draw"
     reason: TerminationReason = "phase_limit"
+    phases: list[GamePhase] = []
 
     for _ in range(max_phases):
         phase = state.bookkeeping.phase_index
@@ -568,7 +577,7 @@ async def run_online_match(
         if peer_offer_standing:
             print_fn(f"phase {phase}: peer offers a draw")
 
-        new_state, phase_outcome, phase_reason = await _exchange_reveal_and_resolve(
+        new_state, phase_terminal, game_phase = await _exchange_reveal_and_resolve(
             peer,
             state,
             local_color,
@@ -579,9 +588,10 @@ async def run_online_match(
             transport_timeout=transport_timeout,
         )
         state = new_state
-        if phase_outcome is not None:
-            assert phase_reason is not None
-            outcome, reason = phase_outcome, phase_reason
+        if game_phase is not None:
+            phases.append(game_phase)
+        if phase_terminal is not None:
+            outcome, reason = phase_terminal.outcome, phase_terminal.reason
             print_fn(f"phase {phase} resolved: {outcome} ({reason})")
             break
         print_fn(f"phase {phase} resolved: ongoing")
@@ -589,5 +599,8 @@ async def run_online_match(
         outcome, reason = "draw", "phase_limit"
 
     return OnlineMatchResult(
-        final_state=state, outcome=outcome, termination_reason=reason
+        final_state=state,
+        outcome=outcome,
+        termination_reason=reason,
+        phases=tuple(phases),
     )

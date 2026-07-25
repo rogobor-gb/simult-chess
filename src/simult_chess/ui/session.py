@@ -43,12 +43,18 @@ def _default_clear(print_fn: PrintFn) -> ClearFn:
 
 @dataclass(frozen=True, slots=True)
 class SessionPhaseRecord:
-    """One resolved phase's event log entry, mirroring `referee.match.PhaseRecord`."""
+    """One resolved phase's event log entry, mirroring `referee.match.PhaseRecord`.
+
+    Carries the two declared programs (Phase 15d) so an interactive game can be
+    written to a `.scn` game record.
+    """
 
     state_before: State
     state_after: State
     outcome: str
     trace: PhiTrace
+    program_white: Program
+    program_black: Program
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +153,8 @@ def run_hot_seat(
                 state_after=new_state,
                 outcome=result_outcome,
                 trace=trace,
+                program_white=program_white,
+                program_black=program_black,
             )
         )
         state = new_state
@@ -208,6 +216,8 @@ def run_human_vs_agent(
                 state_after=new_state,
                 outcome=result_outcome,
                 trace=trace,
+                program_white=program_white,
+                program_black=program_black,
             )
         )
         state = new_state
