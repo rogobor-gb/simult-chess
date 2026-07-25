@@ -1,5 +1,7 @@
 # simult-chess
 
+[![CI](https://github.com/rogobor-gb/simult-chess/actions/workflows/ci.yml/badge.svg)](https://github.com/rogobor-gb/simult-chess/actions/workflows/ci.yml)
+
 A deterministic, zero-sum, two-player **simultaneous-move** chess variant.
 Each phase, both players privately commit a program of up to $N=2$ actions
 (moves, castling, reservations, cancellations); a pure transition operator
@@ -169,6 +171,16 @@ docs/
 ├── simultaneous_chess_spec_v1.md   # ground-truth rule specification (spec)
 └── INVARIANTS.md                    # validation-harness contract (inv)
 ```
+
+## Contributing
+
+The spec is ground truth, the gate is strict, and rule changes go through the
+spec first — see [`CONTRIBUTING.md`](CONTRIBUTING.md). What is the engine and
+what is an application built on top of it is written up in
+[`docs/COLLABORATION.md`](docs/COLLABORATION.md). CI (ruff, `mypy --strict`, the
+fast tests on each supported Python, plus per-extra jobs enforcing the
+dependency quarantine) runs on every PR via
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## License
 
