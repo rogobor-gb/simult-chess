@@ -73,6 +73,17 @@ program with `draw ` to offer one. A match ends with an outcome in
 `{white_wins, black_wins, draw}` and a separate reason (`regicide`,
 `resignation`, `draw_agreement`, `abort`, …).
 
+Add a **clock** with `--time-control 3|0|2` (bank minutes | Fischer increment |
+race-bonus seconds; both peers pass the same). Clocks run concurrently and a
+small bonus rewards whoever commits first; the default capped-difference rule
+makes racing to instant moves self-defeating (`net/clock.py`). Running out of
+bank loses on time. Play **through a relay** when neither side can port-forward:
+run `python -m simult_chess.net.relay --port 6000` on a cheap VPS, then both
+players `python -m simult_chess.net.cli via --relay HOST:6000 --room CODE …`. The
+relay is a plaintext byte pipe with no TLS or auth — the room code is the only
+secret, so use it only among people you trust and never publish its address. The
+wire protocol is written up in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
 Both CLIs accept `--agent {human,random,greedy}` (net) or `--agent
 {random,greedy}` with `--human {white,black}` (ui). Programs are entered in a
 short text DSL — see `src/simult_chess/ui/notation.py`'s module docstring for
@@ -150,7 +161,7 @@ src/simult_chess/
 ├── agents/      # Agent protocol + random_legal, greedy
 ├── harness/     # seeded self-play sweeps, violation reports
 ├── ui/          # notation DSL, ASCII board render, hot-seat/human-vs-agent sessions
-├── net/         # handshake, commit-reveal + match services, keepalive, TCP transport
+├── net/         # handshake, commit-reveal + match services, keepalive, clock, relay
 ├── solver/      # stage-matrix/LP layer (needs the solver extra): matrix_1ply
 └── interop/     # OpenSpiel/pyspiel adapter (needs the openspiel extra)
 
