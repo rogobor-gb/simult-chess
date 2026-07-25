@@ -69,6 +69,18 @@ These are decisions, not tasks. The agent must not pick a side.
 | **C5** | Flag-fall without an arbiter | self-adjudicating clock ledger (both peers compute it) vs advisory-only clock | self-adjudicating; it is derivable identically on both sides |
 | **C6** | Phase 16 (local window) — build or skip | Tk window / skip and go straight to the web client | build only if the maintainer wants a demo artifact; it is throwaway relative to the web app |
 
+### Rulings record (binding maintainer decisions)
+
+| # | Decided | Ruling |
+|---|---|---|
+| **C1** | 2026-07-24 | **`both_pawns`** (freeze at current default). `any_same_square` kept as the named variant `any_same_square_fizzle`. |
+| **C2** | 2026-07-24 | **Freeze all four arms at baseline.** Each rejected value kept as a named variant (`rules/variants.py`). |
+| **C3** | 2026-07-24 | **Provisional** (A5). The `.scn` record binds the `RuleSet` fingerprint, so a later change is detectable, not silent. |
+| **B4** | 2026-07-24 | Illegal remote program **forfeits its sender** (both peers run the same pure `L` check, so they agree without an arbiter). |
+| **C4** | 2026-07-25 | **Capped-difference** race bonus, `β = min(b, |t_W − t_B|)`. Implemented as a registry so the rule is a parameter, not a rewrite. The maintainer notes this is a *starting* calibration to be revisited during playtest: (a) the "reflex-race" degeneracy is a limiting-case argument, not a claim that intermediate humans will actually rush a 3-minute game — good time use beats a fast opponent; (b) `b = 2 s` may simply be too large; (c) a candidate refinement to register alongside capped-difference is a **dead-zone**: award no bonus at all when the two commit times are within some threshold (e.g. 5 s) of each other, so the bonus only rewards a *decisive* speed gap. Register it as a selectable bonus rule; do not make it the default yet. |
+| **C5** | 2026-07-25 | **Self-adjudicating** clock ledger (both peers compute it identically). Explicitly a testing-grade solution, not a tournament-grade one; a tamper-proof arbiter is out of scope for now. |
+| **C6** | 2026-07-25 | **Build the Tk window** as throwaway, *on the condition* that it is cleanly separated from the core effort (the game's definition/testing and the learning system). The maintainer is not the app developer and the window must never entangle the engine. The two engine-side pieces (16.1 partial legality, 16.2 affordance/threat API) are not throwaway and are built regardless. |
+
 ---
 
 ## Phase 14 — Provisional parameter freeze v1.1 (closes Gate 11b)
