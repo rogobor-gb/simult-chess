@@ -96,6 +96,27 @@ and aborts a mismatch by name, so both peers must pass the same `--variant`.
 "Frozen" means *versioned*, not *proven optimal* — see the freeze block at the
 top of [`reports/campaign_v1.md`](reports/campaign_v1.md) and §13 of the spec.
 
+## Game records (`.scn`)
+
+Every game — self-play, hot-seat, or online — can be written to a `.scn`
+record: a header pinning the spec/protocol versions, the ruleset fingerprint
+and full field dump, the initial position, player labels, and seed, then one
+line per phase carrying both programs in the notation DSL and the resolved
+outcome. Replay re-derives every state through Φ and **verifies** the recorded
+resolutions rather than trusting them:
+
+```bash
+python -m simult_chess.referee.record_cli replay game.scn
+python -m simult_chess.referee.record_cli replay game.scn --expect-variant horizon_30
+python -m simult_chess.referee.record_cli to-fixture game.scn --phase 12 --out phase12.json
+```
+
+A record whose stored fingerprint disagrees with its dumped rules, or with an
+`--expect-variant` you name, refuses to replay with a named error rather than
+silently producing different results — so a record is a durable, citable object
+that always reproduces the exact game it was made from (build a record from a
+finished game with `referee.record.build_record`).
+
 ## Tests and sweeps
 
 ```bash
@@ -125,7 +146,7 @@ src/simult_chess/
 ├── core/        # state algebra, geometry oracle, legality L(s,π), Φ
 ├── rules/       # RuleSet (frozen v1.1 + fingerprint), named variants, stage registry
 ├── invariants/  # WF/L/R/T/M checks + severity classification
-├── referee/     # standard setup, commit-reveal observation channel, match loop
+├── referee/     # setup, observation channel, match loop, .scn game record + replay
 ├── agents/      # Agent protocol + random_legal, greedy
 ├── harness/     # seeded self-play sweeps, violation reports
 ├── ui/          # notation DSL, ASCII board render, hot-seat/human-vs-agent sessions
