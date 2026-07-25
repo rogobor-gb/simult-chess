@@ -412,6 +412,32 @@ as a named variant (`rules/variants.py`), so no alternative requires a fork.
 4. **Attacker-sequenced intermezzo (Reading (i))** — a leaner, order-dependent defense; specified in §13.4 below. A/B-tested against Reading (ii) in Phase 11b and **declined** for the v1.1 default (ruling C2: +0.027 draw rate against a ±0.019 MDE, with no shift in the draw-cause breakdown); retained as the playable variant `attacker_sequenced_intermezzo`.
 5. **Trap reservations** — reserve a square against *any* arrival (not just defense of an owned piece); flagged as too random for v1.
 6. **$N\ge 3$, larger boards, reinstated en passant** — future variants.
+7. **Tournament-clean commit timing** — the time control of §13.5 rewards committing early, so commit *arrival times* become an observable side channel: a fast commit correlates with a prepared or forced reply, trading a little informational simultaneity for flavour. A tournament-clean mode would quantise commit transmission to a fixed time grid, hiding the exact commit instant. Out of scope for v1 (flagged, not built).
+
+### 13.5 Time control — a first-decider resource advantage, outside $\Phi$
+
+**Status.** Session-layer, not a rule. A `TimeControl` (implemented Phase 15b in
+`net/clock.py`) lives in the match layer, **not** in `RuleSet` and **not** in
+`State`. $\Phi$ is unchanged and takes no wall-clock argument, so inv **M1** (no
+wall-clock in the operator) stays *literally* true and the clock ledger is
+carried and hashed separately from the state.
+
+**What it is.** Each player has a per-phase bank; clocks run **concurrently**
+(both players are on the clock for the same phase, unlike alternating chess),
+and a **race bonus** rewards whichever player commits first —
+$B_\omega^{k+1} = B_\omega^k - t_\omega^k + \iota + \beta_\omega^k$ with $\iota$
+a Fischer increment and $\beta_\omega^k$ the bonus. The v1 default is
+*capped-difference*, $\beta = \min(b, |t_\mathrm W - t_\mathrm B|)$ for the
+faster player (maintainer ruling C4). Forfeit-on-time needs no default program,
+since L1/L2 make a null program illegal — the game simply ends.
+
+**Why the design invariant is not broken.** "Simultaneity eliminates first-mover
+advantage" is untouched: $\Phi$ has no mover order and the successor state is
+independent of who transmitted first (M2/M3 unchanged). What the bonus adds is a
+*first-**decider*** resource advantage — a reward for deciding quickly, paid in
+clock time, strictly **outside** the operator. This is stated explicitly here so
+the invariant is not later misread as broken: the clock changes what a *match*
+optimises, never what $\Phi$ computes.
 
 ### 13.4 Attacker-sequenced intermezzo — Reading (i)
 

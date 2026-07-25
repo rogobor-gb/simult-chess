@@ -417,6 +417,13 @@ yields bit-identical $s'$ and identical trace, with no dependence on wall-clock,
 state, or unseeded randomness. *Ref.* §5, §14. *Check.* evaluate twice; assert equality
 of $s'$ and canonicalized trace.
 
+> **Time control does not touch M1 (Phase 15b, spec §13.5).** The concurrent-bank
+> clock and its race bonus are *session metadata* in the match layer
+> (`net/clock.py`), never arguments to $\Phi$. The clock ledger is carried and
+> hashed alongside the state, not inside it; $\Phi$ still takes no wall-clock, so
+> M1 stays literally true. A flag-fall is a `termination_reason` (like resignation
+> or abort), not a property of the operator.
+
 **M2 — Internal-order independence.** *(S0)*
 The output is invariant to the internal processing order at each ordered stage:
 (a) the backward-induction order of fizzle resolution (Lemma 6.2);
