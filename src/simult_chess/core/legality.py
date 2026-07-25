@@ -239,6 +239,31 @@ def check_l6_geometric_legality(
     return violations
 
 
+def check_partial_program(
+    state: State, program: Program, color: Color, ruleset: RuleSet
+) -> list[Violation]:
+    """Run only the clauses valid for a *program under construction* (Phase 16.1).
+
+    L3–L6 (distinct actors, cooldown, own-consistency, geometric legality) all
+    hold clause-by-clause as a player builds a program, so they can validate
+    each partial edit live in a UI. The two *whole-program* clauses are
+    skipped: L1 (the 1..N budget) rejects the empty in-progress program, and L2
+    (mandatory displacement) can only be judged once the program is complete.
+    Full `L` still runs on submit — this shares the exact clause functions with
+    :func:`check_legal_program`, never a copy.
+
+    ``ruleset`` is accepted for signature parity with :func:`check_legal_program`
+    (L3–L6 do not currently read it).
+    """
+    del ruleset
+    return [
+        *check_l3_distinct_actors(state, program, color),
+        *check_l4_cooldown_respected(state, program, color),
+        *check_l5_own_consistency(state, program, color),
+        *check_l6_geometric_legality(state, program, color),
+    ]
+
+
 def check_legal_program(
     state: State, program: Program, color: Color, ruleset: RuleSet
 ) -> list[Violation]:
@@ -246,10 +271,7 @@ def check_legal_program(
     return [
         *check_l1_budget(program, ruleset),
         *check_l2_mandatory_displacement(state, program, color),
-        *check_l3_distinct_actors(state, program, color),
-        *check_l4_cooldown_respected(state, program, color),
-        *check_l5_own_consistency(state, program, color),
-        *check_l6_geometric_legality(state, program, color),
+        *check_partial_program(state, program, color, ruleset),
     ]
 
 
