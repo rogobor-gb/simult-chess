@@ -1,0 +1,84 @@
+# Hosted CI (Phase 17; closes audit B10, activates ruling A11).
+#
+# The `gate` job runs the *same* `scripts/check.sh` a contributor runs locally
+# (ruff, mypy --strict, the fast pytest subset) — not a reimplementation — over
+# the supported Python versions. The extras (`solver`, `oracle`, `openspiel`,
+# `learn`) are exercised in their own installations so the dependency
+# quarantine (core/rules/referee import no third-party package) is enforced by
+# CI, not only by a local test.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # ruff + mypy --strict + `pytest -m "not slow"`, via scripts/check.sh, on
+    # each supported Python. mypy needs numpy (typed) and torch installed to
+    # check the solver/interop/learn layers; scipy and pyspiel are already
+    # `ignore_missing_imports` in pyproject, so they need not be present here.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (CPU torch + solver/oracle extras + dev)
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch keeps the download small; it also satisfies mypy and
+          # the learn tests without pulling the large default CUDA wheel.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,solver,oracle]"
+      - name: scripts/check.sh
+        run: bash scripts/check.sh
+
+  interop:
+    # The openspiel extra in its own job: pyspiel wheels are Linux-only and
+    # version-limited, so it is quarantined here rather than in the matrix.
+    # Track open_spiel's wheel matrix if this Python version stops resolving.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (openspiel extra + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,openspiel]"
+      - name: OpenSpiel adapter tests
+        run: pytest -m "not slow" tests/unit/test_openspiel_adapter.py tests/unit/test_openspiel_conformance.py tests/unit/test_openspiel_smoke.py
+
+  quarantine:
+    # The base package with NO extras must import and pass its own tests, so a
+    # future core/rules/referee import of a third-party package is caught here
+    # (extra-dependent tests skip cleanly via `importorskip`).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (base + dev only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Base test suite (no extras)
+        run: pytest -m "not slow"
