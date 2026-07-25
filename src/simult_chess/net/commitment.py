@@ -15,12 +15,26 @@ import json
 from typing import Any
 
 
-def commitment_hash(salt: bytes, program_json: list[dict[str, Any]]) -> str:
+def commitment_hash(
+    salt: bytes,
+    program_json: list[dict[str, Any]],
+    *,
+    elapsed_us: int | None = None,
+) -> str:
     """The commitment for `program_json` under `salt`: a hex SHA-256 digest.
 
     `program_json` is serialized with sorted keys and no incidental
     whitespace so the same program always hashes identically regardless of
     dict-ordering quirks.
+
+    When `elapsed_us` is given (Phase 15b), the committer's self-measured
+    thinking time (in microseconds) is bound into the digest, so a peer cannot
+    revise its claimed time after seeing the opponent's — the clock is
+    self-adjudicating (ruling C5). An untimed game passes ``None`` and hashes
+    exactly as before, so its records and tests are unchanged.
     """
     canonical = json.dumps(program_json, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(salt + canonical.encode()).hexdigest()
+    material = salt + canonical.encode()
+    if elapsed_us is not None:
+        material += b"|t=" + str(elapsed_us).encode()
+    return hashlib.sha256(material).hexdigest()

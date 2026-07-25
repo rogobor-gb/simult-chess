@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -49,6 +50,15 @@ from simult_chess.core.legality import check_legal_program
 from simult_chess.core.phi import phi
 from simult_chess.core.stages.closure import detect_terminal
 from simult_chess.core.types import Color, Program, State
+from simult_chess.net.clock import (
+    Banks,
+    ClockEntry,
+    TimeControl,
+    apply_phase,
+    entry_hash,
+    format_entry,
+    initial_banks,
+)
 from simult_chess.net.commitment import commitment_hash
 from simult_chess.net.handshake import perform_handshake, state_hash
 from simult_chess.net.protocol import (
@@ -94,6 +104,28 @@ untouched.
 """
 
 PrintFn = Callable[[str], None]
+
+#: Tolerance slack added to the measured one-way delay bound when cross-checking
+#: a peer's self-reported thinking time (seconds). Absorbs scheduling jitter on
+#: top of ``d_max`` so an honest peer is never wrongly rejected.
+_CLOCK_EPSILON = 0.25
+
+#: Floor on the estimated one-way-delay bound ``d_max`` (seconds), so a very
+#: low-latency link cannot make the time cross-check hair-trigger, and a lossy
+#: one cannot be gamed by inflating the tolerance.
+_DMAX_FLOOR = 0.05
+
+#: Round trips used to estimate ``d_max`` during the pre-match clock handshake.
+_DMAX_ROUNDS = 4
+
+
+@dataclass(slots=True)
+class _ClockState:
+    """Live clock state for a timed match: rules, tolerance, running banks."""
+
+    tc: TimeControl
+    d_max: float
+    banks: Banks
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +287,12 @@ async def _keepalive_until_slot(
     phase: int,
     keepalive_interval: float,
     liveness_deadline: float,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], float]:
     """Wait for the peer's action slot, pinging while it thinks (B5).
+
+    Returns the slot message together with the ``time.monotonic()`` instant it
+    arrived — the observed-arrival timestamp the clock cross-check compares the
+    peer's self-reported thinking time against (Phase 15b).
 
     Any message — ping, pong, or the slot itself — proves the peer is alive and
     resets the liveness window; a full ``liveness_deadline`` of total silence
@@ -288,7 +324,7 @@ async def _keepalive_until_slot(
         elif mtype == MSG_PONG:
             continue
         elif mtype in ACTION_SLOT_TYPES:
-            return message
+            return message, time.monotonic()
         else:
             raise ProtocolError(f"unexpected {mtype!r} while awaiting peer's action")
 
@@ -300,6 +336,7 @@ class _LocalCommit:
     program: Program
     salt: bytes
     program_json: list[dict[str, Any]]
+    elapsed: float | None = None
 
 
 async def _think_and_send_slot(
@@ -312,8 +349,15 @@ async def _think_and_send_slot(
     *,
     phase: int,
     peer_offered_draw: bool,
+    clock: _ClockState | None,
+    phase_start: float,
 ) -> tuple[Decision, _LocalCommit | None]:
-    """Compute this peer's decision off the event loop, then send its slot (B2)."""
+    """Compute this peer's decision off the event loop, then send its slot (B2).
+
+    When a clock is running, the local thinking time (phase start to commit) is
+    measured here and bound into the commitment, so it cannot be revised after
+    seeing the opponent's time (Phase 15b, ruling C5).
+    """
 
     def _decide() -> Decision:
         return decider(
@@ -325,15 +369,20 @@ async def _think_and_send_slot(
     if isinstance(decision, PlayDecision):
         program_json = serialize_program(decision.program, state, local_color)
         salt = os.urandom(16)
+        elapsed: float | None = None
+        elapsed_us: int | None = None
+        if clock is not None:
+            elapsed = time.monotonic() - phase_start
+            elapsed_us = round(elapsed * 1_000_000)
         await peer.send(
             {
                 "type": MSG_COMMIT,
                 "phase_index": phase,
-                "hash": commitment_hash(salt, program_json),
+                "hash": commitment_hash(salt, program_json, elapsed_us=elapsed_us),
                 "offer_draw": decision.offer_draw,
             }
         )
-        return decision, _LocalCommit(decision.program, salt, program_json)
+        return decision, _LocalCommit(decision.program, salt, program_json, elapsed)
     if isinstance(decision, ResignDecision):
         await peer.send({"type": MSG_RESIGN, "phase_index": phase})
     elif isinstance(decision, AbortDecision):
@@ -382,6 +431,9 @@ async def _exchange_reveal_and_resolve(
     *,
     phase: int,
     transport_timeout: float,
+    clock: _ClockState | None,
+    phase_start: float,
+    remote_arrival: float,
 ) -> tuple[State, _Terminal | None, GamePhase | None]:
     """Reveal, verify, adjudicate legality, resolve Φ, and cross-check the state.
 
@@ -391,23 +443,36 @@ async def _exchange_reveal_and_resolve(
     phase actually resolved). Both the reveal and the ack are messages the peer
     should send *immediately* once both committed, so they are bounded by
     ``transport_timeout`` (decision time is already spent).
+
+    When a clock is running, the reveal also carries each peer's self-reported
+    thinking time; the times are commitment-bound and cross-checked against the
+    observed arrival under the ``d_max`` bound, then fed to the clock ledger. A
+    flag-fall ends the match on time before Φ runs, and the per-phase ledger
+    hash joins the state-hash divergence check.
     """
     remote_color = local_color.opponent
-    await peer.send(
-        {
-            "type": MSG_REVEAL,
-            "phase_index": phase,
-            "salt": local_commit.salt.hex(),
-            "program": local_commit.program_json,
-        }
-    )
+    reveal_msg: dict[str, Any] = {
+        "type": MSG_REVEAL,
+        "phase_index": phase,
+        "salt": local_commit.salt.hex(),
+        "program": local_commit.program_json,
+    }
+    local_elapsed_us: int | None = None
+    if clock is not None and local_commit.elapsed is not None:
+        local_elapsed_us = round(local_commit.elapsed * 1_000_000)
+        reveal_msg["elapsed_us"] = local_elapsed_us
+    await peer.send(reveal_msg)
+
     remote_reveal = await _recv_skipping_keepalive(
         peer, phase=phase, transport_timeout=transport_timeout
     )
     _check_envelope(remote_reveal, MSG_REVEAL, phase)
     remote_salt = bytes.fromhex(remote_reveal["salt"])
     remote_json = remote_reveal["program"]
-    if commitment_hash(remote_salt, remote_json) != remote_commit["hash"]:
+    remote_elapsed_us = remote_reveal.get("elapsed_us") if clock is not None else None
+    if commitment_hash(remote_salt, remote_json, elapsed_us=remote_elapsed_us) != (
+        remote_commit["hash"]
+    ):
         raise ProtocolError(
             f"phase {phase}: peer's reveal does not match its commitment"
         )
@@ -422,22 +487,162 @@ async def _exchange_reveal_and_resolve(
     if forfeit is not None:
         return state, forfeit, None
 
+    clock_entry: ClockEntry | None = None
+    if clock is not None:
+        flag_terminal, clock_entry = _advance_clock(
+            clock,
+            local_color,
+            local_elapsed_us=local_elapsed_us,
+            remote_elapsed_us=remote_elapsed_us,
+            phase=phase,
+            phase_start=phase_start,
+            remote_arrival=remote_arrival,
+        )
+        if flag_terminal is not None:
+            # Flag-fall ends the game on time before Φ; confirm the ledger hash.
+            await _exchange_ack(
+                peer,
+                phase=phase,
+                transport_timeout=transport_timeout,
+                state_hash_value=state_hash(state),
+                clock_hash=entry_hash(clock_entry),
+            )
+            return state, flag_terminal, None
+
     white, black = _ordered(local_color, local_commit.program, remote_program)
     result = phi(state, white, black, ruleset)
-    local_hash = state_hash(result.state)
-    await peer.send({"type": MSG_ACK, "phase_index": phase, "state_hash": local_hash})
-    remote_ack = await _recv_skipping_keepalive(
-        peer, phase=phase, transport_timeout=transport_timeout
+    clock_hash = entry_hash(clock_entry) if clock_entry is not None else None
+    await _exchange_ack(
+        peer,
+        phase=phase,
+        transport_timeout=transport_timeout,
+        state_hash_value=state_hash(result.state),
+        clock_hash=clock_hash,
     )
-    _check_envelope(remote_ack, MSG_ACK, phase)
-    if remote_ack["state_hash"] != local_hash:
-        raise ProtocolError(f"phase {phase}: post-phase state diverged from peer")
 
-    game_phase = GamePhase(white, black, result.outcome)
+    clock_txt = format_entry(clock_entry) if clock_entry is not None else "-"
+    game_phase = GamePhase(white, black, result.outcome, clock_txt)
     if result.outcome == "ongoing":
         return result.state, None, game_phase
     reason = _terminal_reason(result.state, ruleset)
     return result.state, _Terminal(result.outcome, reason), game_phase
+
+
+async def _exchange_ack(
+    peer: Transport,
+    *,
+    phase: int,
+    transport_timeout: float,
+    state_hash_value: str,
+    clock_hash: str | None,
+) -> None:
+    """Exchange and cross-check the post-phase state hash (and clock hash)."""
+    ack: dict[str, Any] = {
+        "type": MSG_ACK,
+        "phase_index": phase,
+        "state_hash": state_hash_value,
+    }
+    if clock_hash is not None:
+        ack["clock_hash"] = clock_hash
+    await peer.send(ack)
+    remote_ack = await _recv_skipping_keepalive(
+        peer, phase=phase, transport_timeout=transport_timeout
+    )
+    _check_envelope(remote_ack, MSG_ACK, phase)
+    if remote_ack["state_hash"] != state_hash_value:
+        raise ProtocolError(f"phase {phase}: post-phase state diverged from peer")
+    if clock_hash is not None and remote_ack.get("clock_hash") != clock_hash:
+        raise ProtocolError(f"phase {phase}: clock ledger diverged from peer")
+
+
+def _advance_clock(
+    clock: _ClockState,
+    local_color: Color,
+    *,
+    local_elapsed_us: int | None,
+    remote_elapsed_us: object,
+    phase: int,
+    phase_start: float,
+    remote_arrival: float,
+) -> tuple[_Terminal | None, ClockEntry]:
+    """Cross-check the peer's claimed time, advance both banks, detect a flag.
+
+    Both peers compute the identical banks from the identical revealed times, so
+    a flag-fall is derived and agreed by construction (ruling C5). A claimed
+    time outside ``d_max + ε`` of the observed arrival is rejected by name.
+
+    Both times are taken from their microsecond-quantized wire form (each peer's
+    own included), so the two peers' ledgers are byte-identical: a peer must not
+    feed its full-precision local measurement into the ledger while the other
+    sees only the rounded value.
+    """
+    if not isinstance(local_elapsed_us, int) or not isinstance(remote_elapsed_us, int):
+        raise ProtocolError(f"phase {phase}: a timed game requires reported times")
+    local_elapsed = local_elapsed_us / 1_000_000
+    remote_elapsed = remote_elapsed_us / 1_000_000
+    observed = remote_arrival - phase_start
+    if abs(remote_elapsed - observed) > clock.d_max + _CLOCK_EPSILON:
+        raise ProtocolError(
+            f"phase {phase}: peer's claimed think time {remote_elapsed:.3f}s is "
+            f"outside tolerance of the observed {observed:.3f}s "
+            f"(d_max {clock.d_max:.3f}s)"
+        )
+    if local_color is Color.WHITE:
+        think_white, think_black = local_elapsed, remote_elapsed
+    else:
+        think_white, think_black = remote_elapsed, local_elapsed
+    banks, entry, flag = apply_phase(
+        clock.banks,
+        clock.tc,
+        think_white=think_white,
+        think_black=think_black,
+        phase_index=phase,
+    )
+    clock.banks = banks
+    if flag is None:
+        return None, entry
+    if flag.white_flagged and flag.black_flagged:
+        return _Terminal("draw", "timeout"), entry
+    winner = Color.BLACK if flag.white_flagged else Color.WHITE
+    return _Terminal(_color_wins(winner), "timeout"), entry
+
+
+async def _estimate_dmax(
+    peer: Transport,
+    *,
+    transport_timeout: float,
+    rounds: int = _DMAX_ROUNDS,
+    floor: float = _DMAX_FLOOR,
+) -> float:
+    """Estimate a one-way-delay bound from a few ping/pong round trips (§15b).
+
+    Run once after the handshake, before any keepalive traffic. Each peer both
+    initiates pings (tagged ``dmax_seq``, distinct from keepalive pings) and
+    answers the other's, so the two measure concurrently. ``d_max`` is half the
+    largest round trip, floored so a fast link cannot make the time cross-check
+    hair-trigger.
+    """
+    round_trips: list[float] = []
+    for seq in range(rounds):
+        start = time.monotonic()
+        await peer.send({"type": MSG_PING, "dmax_seq": seq})
+        while True:
+            message = await peer.recv(timeout=transport_timeout)
+            if message.get("type") == MSG_PING and "dmax_seq" in message:
+                await peer.send({"type": MSG_PONG, "dmax_seq": message["dmax_seq"]})
+            elif message.get("type") == MSG_PONG and message.get("dmax_seq") == seq:
+                round_trips.append(time.monotonic() - start)
+                break
+    return max(floor, max(round_trips) / 2.0)
+
+
+def _mmss(seconds: float) -> str:
+    minutes, secs = divmod(int(max(0.0, seconds)), 60)
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_banks(banks: Banks) -> str:
+    return f"White {_mmss(banks.white)} | Black {_mmss(banks.black)}"
 
 
 def _ordered(
@@ -486,6 +691,7 @@ async def run_online_match(
     keepalive_interval: float = 5.0,
     liveness_deadline: float = 20.0,
     max_phases: int = 500,
+    time_control: TimeControl | None = None,
     print_fn: PrintFn = print,
 ) -> OnlineMatchResult:
     """Play a full game against `peer`, deciding programs via `decider`.
@@ -513,6 +719,12 @@ async def run_online_match(
         commit (B5).
     max_phases : int
         Phase-limit draw bound (session metadata; must match the peer's).
+    time_control : TimeControl, optional
+        A concurrent-bank clock (Phase 15b). ``None`` plays untimed, exactly as
+        before. When set, both peers estimate a one-way-delay bound after the
+        handshake, then each phase measures and cross-checks thinking times and
+        runs the shared ledger; a flag-fall ends the game with reason
+        ``timeout``. The clock is session metadata, never in `State` (inv M1).
     """
     local_color = await perform_handshake(
         peer,
@@ -524,6 +736,17 @@ async def run_online_match(
         transport_timeout=transport_timeout,
     )
     print_fn(f"handshake ok — playing {local_color.value}")
+
+    clock: _ClockState | None = None
+    if time_control is not None:
+        d_max = await _estimate_dmax(peer, transport_timeout=transport_timeout)
+        clock = _ClockState(
+            tc=time_control, d_max=d_max, banks=initial_banks(time_control)
+        )
+        print_fn(
+            f"clock {time_control.format()} — d_max ≈ {d_max * 1000:.0f} ms; "
+            f"{_format_banks(clock.banks)}"
+        )
 
     state = initial_state
     # A draw offer stands from the commit it rides on until the *peer's next
@@ -538,7 +761,8 @@ async def run_online_match(
 
     for _ in range(max_phases):
         phase = state.bookkeeping.phase_index
-        (decision, local_commit), remote_slot = await asyncio.gather(
+        phase_start = time.monotonic()
+        (decision, local_commit), (remote_slot, remote_arrival) = await asyncio.gather(
             _think_and_send_slot(
                 peer,
                 decider,
@@ -548,6 +772,8 @@ async def run_online_match(
                 rng,
                 phase=phase,
                 peer_offered_draw=peer_offer_standing,
+                clock=clock,
+                phase_start=phase_start,
             ),
             _keepalive_until_slot(
                 peer,
@@ -586,10 +812,15 @@ async def run_online_match(
             remote_slot,
             phase=phase,
             transport_timeout=transport_timeout,
+            clock=clock,
+            phase_start=phase_start,
+            remote_arrival=remote_arrival,
         )
         state = new_state
         if game_phase is not None:
             phases.append(game_phase)
+        if clock is not None:
+            print_fn(f"phase {phase}: {_format_banks(clock.banks)}")
         if phase_terminal is not None:
             outcome, reason = phase_terminal.outcome, phase_terminal.reason
             print_fn(f"phase {phase} resolved: {outcome} ({reason})")
