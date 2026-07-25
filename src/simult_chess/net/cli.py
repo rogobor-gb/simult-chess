@@ -21,6 +21,7 @@ from simult_chess.agents.greedy import greedy_program
 from simult_chess.agents.random_legal import random_legal_program
 from simult_chess.core import legality
 from simult_chess.core.types import Color, State
+from simult_chess.net.clock import TimeControl
 from simult_chess.net.handshake import HandshakeError
 from simult_chess.net.protocol import ProtocolError
 from simult_chess.net.session import (
@@ -33,7 +34,12 @@ from simult_chess.net.session import (
     agent_decider,
     run_online_match,
 )
-from simult_chess.net.transport import Peer, connect_peer, host_peer
+from simult_chess.net.transport import (
+    Peer,
+    connect_peer,
+    connect_via_relay,
+    host_peer,
+)
 from simult_chess.referee.setup import standard_starting_state
 from simult_chess.rules.ruleset import RuleSet
 from simult_chess.rules.variants import BASELINE_NAME, get_variant, variant_names
@@ -102,7 +108,17 @@ def _build_parser() -> argparse.ArgumentParser:
     connect_parser.add_argument("--remote-host", required=True)
     connect_parser.add_argument("--port", type=int, required=True)
 
-    for sub in (host_parser, connect_parser):
+    via_parser = subparsers.add_parser(
+        "via", help="play through a rendezvous relay (no port-forwarding)"
+    )
+    via_parser.add_argument(
+        "--relay", required=True, metavar="HOST:PORT", help="relay address"
+    )
+    via_parser.add_argument(
+        "--room", required=True, help="shared room code; both peers use the same"
+    )
+
+    for sub in (host_parser, connect_parser, via_parser):
         sub.add_argument("--color", choices=("white", "black"), required=True)
         sub.add_argument("--agent", choices=(*_AGENTS, "human"), default="human")
         sub.add_argument("--seed", type=int, default=0)
@@ -134,6 +150,14 @@ def _build_parser() -> argparse.ArgumentParser:
             default=20.0,
             help="total silence (s) tolerated before declaring the peer dead",
         )
+        sub.add_argument(
+            "--time-control",
+            type=str,
+            default=None,
+            help="concurrent-bank clock as 'minutes|increment|bonus[/rule]', "
+            "e.g. 3|0|2 (3 min bank, no increment, 2 s capped-difference race "
+            "bonus). Both peers must pass the same value. Omit for untimed",
+        )
 
     return parser
 
@@ -148,14 +172,23 @@ async def _amain(argv: list[str] | None = None) -> int:
         _human_decider if args.agent == "human" else agent_decider(_AGENTS[args.agent])
     )
     rng = random.Random(args.seed)
+    time_control = (
+        TimeControl.parse(args.time_control)
+        if args.time_control is not None
+        else None
+    )
 
     peer: Peer
     if args.mode == "host":
         peer, bound_port = await host_peer(args.port)
         print(f"peer connected (listened on port {bound_port})")
-    else:
+    elif args.mode == "connect":
         peer = await connect_peer(args.remote_host, args.port)
         print(f"connected to {args.remote_host}:{args.port}")
+    else:  # via a relay
+        relay_host, _, relay_port = args.relay.rpartition(":")
+        peer = await connect_via_relay(relay_host, int(relay_port), args.room)
+        print(f"joined room {args.room!r} via relay {args.relay}")
 
     try:
         result = await run_online_match(
@@ -169,6 +202,7 @@ async def _amain(argv: list[str] | None = None) -> int:
             keepalive_interval=args.keepalive_interval,
             liveness_deadline=args.liveness_deadline,
             max_phases=args.max_phases,
+            time_control=time_control,
         )
     except HandshakeError as exc:
         print(f"handshake failed: {exc}")

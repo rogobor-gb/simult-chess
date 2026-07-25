@@ -97,3 +97,16 @@ async def connect_peer(remote_host: str, port: int) -> Peer:
     """Open a connection to a hosting peer at `remote_host`:`port`."""
     reader, writer = await asyncio.open_connection(remote_host, port)
     return Peer(reader=reader, writer=writer)
+
+
+async def connect_via_relay(relay_host: str, port: int, room: str) -> Peer:
+    """Open a connection *through* a rendezvous relay (Phase 15c).
+
+    Sends the room code as the first line, then behaves as an ordinary `Peer`:
+    the relay (`net/relay.py`) pairs the two connections that share a code and
+    pipes their bytes, transparently to everything above the socket.
+    """
+    reader, writer = await asyncio.open_connection(relay_host, port)
+    writer.write((room + "\n").encode())
+    await writer.drain()
+    return Peer(reader=reader, writer=writer)

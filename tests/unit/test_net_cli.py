@@ -82,3 +82,11 @@ def test_parser_defaults() -> None:
     assert args.keepalive_interval == 5.0
     assert args.liveness_deadline == 20.0
     assert args.max_phases == 500
+    assert args.time_control is None
+
+
+def test_parser_accepts_a_time_control() -> None:
+    args = cli._build_parser().parse_args(
+        ["host", "--port", "5000", "--color", "white", "--time-control", "3|0|2"]
+    )
+    assert args.time_control == "3|0|2"
