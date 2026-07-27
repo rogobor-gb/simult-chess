@@ -70,6 +70,40 @@ def test_main_agent_mode_dispatches_with_chosen_color_and_agent(
     assert captured["human_color"] is Color.BLACK
 
 
+def test_build_parser_window_mode_defaults() -> None:
+    args = cli._build_parser().parse_args(["window"])
+    assert args.mode == "window"
+    assert args.human == "white"
+    assert args.agent == "greedy"  # the window defaults to a real opponent
+    assert args.variant == BASELINE_NAME
+
+
+def test_main_window_mode_launches_with_chosen_color_and_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    import simult_chess.ui.window as window_module
+
+    captured: dict[str, object] = {}
+
+    class FakeWindow:
+        def __init__(
+            self, state: object, ruleset: object, *,
+            human_color: object, agent: object, seed: int,
+        ) -> None:
+            captured["human_color"] = human_color
+            captured["agent"] = agent
+            self.root = types.SimpleNamespace(
+                mainloop=lambda: captured.__setitem__("looped", True)
+            )
+
+    monkeypatch.setattr(window_module, "SimultChessWindow", FakeWindow)
+    assert cli.main(["window", "--human", "black", "--agent", "greedy"]) == 0
+    assert captured["human_color"] is Color.BLACK
+    assert captured["looped"] is True
+
+
 def test_variants_subcommand_lists_every_registered_variant(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

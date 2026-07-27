@@ -45,10 +45,18 @@ program early):
 python -m simult_chess.ui.cli hotseat
 ```
 
-Local, human vs. an agent:
+Local, human vs. an agent (in the terminal):
 
 ```bash
 python -m simult_chess.ui.cli agent --human white --agent greedy --seed 0
+```
+
+Local, human vs. an agent in a **click-to-play window** (Phase 16; needs a
+display — click a piece, click a highlighted destination, then Submit;
+threatened pieces are outlined and the resolution view explains each phase):
+
+```bash
+python -m simult_chess.ui.cli window --human white --agent greedy
 ```
 
 Online, direct TCP connection (one side hosts, one connects; no relay/NAT
