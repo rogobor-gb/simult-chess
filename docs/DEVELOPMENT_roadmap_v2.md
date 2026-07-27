@@ -510,6 +510,82 @@ release's `RuleSet.fingerprint()` is recorded in the deposit metadata.
 
 ---
 
+## Phase 17b — King-cooldown-exemption exploit: measure, then rule
+
+**Trigger.** Maintainer playtest of the Phase 16 window, 2026-07-26. Observed
+pattern: an attacker displaces to threaten the king; the king evades to a safe
+square; the attacker — having just displaced — enters cooldown next phase
+(§7); the king, which is **never cooled** (§7: "kings are exempt" — the
+deliberate "must always be able to move" design choice that also rules out
+classical stalemate mechanics), is then free to walk up and capture the
+now-inert, defenseless attacker with no counter-threat available. The maintainer's
+read: "the king is very dangerous even when it's under check" — a king that
+provokes an attack and survives it is *rewarded*, not merely safe.
+
+**Why this isn't already a ruled/measured question.** It is adjacent to one the
+spec already flags as open by design: §8.3 states the KQ–K endgame's capture
+probability is "genuinely open and empirical, not to be legislated," and calls
+the probabilistic-material-advantage property "arguably the most novel feature
+of the design." But §8.3's framing is about whether a *pursuer* can force
+capture of a fleeing king — it does not address the king *itself* acting as an
+uncooled, consequence-free attacker. That specific mechanism (cooldown
+asymmetry weaponized by the king) has not been measured by any campaign to
+date; Phase 11b's estimands did not target it.
+
+**Scope discipline.** Per prime directive 2 (`DEVELOPMENT.md` §0):
+`[OPEN]`/convention items become ruled defaults, never a silent code change —
+**no rule change lands in this sub-phase.** 17b is measurement and a ruling
+request only; any resulting `RuleSet` field is a Phase 17c (or later)
+implementation, gated on the ruling below.
+
+**Deliverables.**
+1. **A targeted estimand**, extending the Phase 11b campaign methodology: over
+   a seeded self-play sample (`matrix_1ply` self-play at minimum; `greedy` as a
+   secondary arm since it is what the window currently offers as an opponent),
+   measure — per decisive game — whether the winning side's *king* was the
+   piece that made the final capture, and separately, the rate at which a king
+   evasion is followed within 1–2 phases by that same king capturing its
+   evader. This isolates "king hunts back" from ordinary king mobility.
+2. **A report** (`reports/king_cooldown_v1.md`, mirroring `campaign_v1.md`'s
+   format) stating the measured rates with Wilson CIs, and whether they are
+   large enough to look like a structural imbalance rather than an
+   occasionally-dramatic but rare tactical resource.
+3. **A ruling request to the maintainer** (recorded in this roadmap's §B-style
+   table once opened), with at least these options on the table — **the agent
+   does not pick a side**:
+   - **C7a — status quo.** The mechanic is deliberate (§7's always-mobile king,
+     §8.3's probabilistic-material framing); no rule change. The measured rate
+     from deliverable 1 either supports or undercuts this as "working as
+     designed."
+   - **C7b — no-backtrack king rule** (the maintainer's own suggestion,
+     2026-07-26): a king may not move to the square it *departed* on its
+     immediately preceding displacement. Narrow — stops the literal
+     step-away/step-back oscillation, but does **not** stop a king evading to a
+     *different* safe square and then capturing the (still-cooled) attacker
+     from there, so it may not address the mechanism the playtest actually
+     surfaced.
+   - **C7c — king capture cooldown.** A king that itself was the target of an
+     unsuccessful capture attempt cannot execute a capture on its next phase
+     (narrower than full king cooldown: mobility is untouched, only its
+     *offensive* follow-up is blocked). Closest fit to the observed pattern,
+     but is a genuinely new rule, not a parameter toggle — needs its own spec
+     subsection and invariant coupling if adopted.
+   - **C7d — full king cooldown.** Remove the king's cooldown exemption
+     entirely. Structurally the largest change: the spec built the exemption
+     specifically to avoid reintroducing classical stalemate/lockup
+     pathologies (§7), so this option carries that risk and would need its own
+     analysis, not just a flag flip.
+
+**DoD.** Report committed; ruling recorded (status: open until the maintainer
+decides); **no code/spec/invariants change** — that is explicitly out of scope
+for 17b and belongs to whichever follow-up sub-phase the ruling opens.
+
+> #### ⛔ COMMIT GATE 17b
+> **Suggested message:** `docs(roadmap): scope the king-cooldown-exemption exploit for measurement and ruling`
+> **STOP — measurement and ruling only; no rule change until the maintainer decides.**
+
+---
+
 ## Milestone map (extends v1.0 §6 and v1.1)
 
 | Goal | Delivered at |
@@ -521,6 +597,7 @@ release's `RuleSet.fingerprint()` is recorded in the deposit metadata.
 | Replayable, citable game records | Gate 15d |
 | A window a non-technical player can use | Gate 16 |
 | Repository safe for a second contributor; work citable | Gate 17 |
+| King-cooldown-exemption exploit measured; ruling requested | Gate 17b |
 
 ## Recommended sequencing
 
