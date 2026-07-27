@@ -52,8 +52,15 @@ python -m simult_chess.ui.cli agent --human white --agent greedy --seed 0
 ```
 
 Local, human vs. an agent in a **click-to-play window** (Phase 16; needs a
-display — click a piece, click a highlighted destination, then Submit;
-threatened pieces are outlined and the resolution view explains each phase):
+display). Pick a mode — **Move** (click a piece, then a highlighted square),
+**Reserve** (click the defender, then the piece it should defend), or
+**Cancel** (click a defender, highlighted orange, to cancel its reservation);
+**O-O**/**O-O-O** castle directly. Threatened pieces are outlined red, cooling-
+down pieces carry a grey dot, and an illegal click explains itself instead of
+doing nothing. The game **stops and locks** the moment a king is captured,
+showing the outcome and why. The resolution view explains each phase in plain
+language — what fizzled and why, what was captured or recaptured, what
+annihilated — since there is no "check" in this game to signal danger:
 
 ```bash
 python -m simult_chess.ui.cli window --human white --agent greedy
