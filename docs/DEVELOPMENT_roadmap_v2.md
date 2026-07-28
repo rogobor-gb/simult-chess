@@ -466,10 +466,9 @@ the spec can complete a game against `greedy` without typing notation; every
 
 ---
 
-## Phase 17 — Collaboration and publication package
+## Phase 17 — Collaboration hygiene (CI, CONTRIBUTING, boundary doc)
 
-**Goal.** Make the repository safe for a second contributor and the work
-citable.
+**Goal.** Make the repository safe for a second contributor.
 
 **Deliverables.**
 - **CI (closes B10, activates A11).** GitHub Actions running
@@ -488,6 +487,29 @@ citable.
   much easier to answer in advance than after an app has users. *This is
   organisational hygiene, not legal advice; a lawyer should see anything
   with money attached.*
+
+**DoD.** CI green on a test PR and required for merge; `CONTRIBUTING.md`
+reviewed.
+
+> #### ⛔ COMMIT GATE 17
+> **Suggested message:** `ci: local gate on PRs; docs: contributing, collaboration scope`
+> **STOP.**
+
+**Status (2026-07-27): built and committed** — CI workflow, `CONTRIBUTING.md`,
+`docs/COLLABORATION.md`. Outstanding, on the maintainer (GitHub-side, not
+something the agent can do): open a test PR to see the checks run green, then
+set branch protection to require them for merge.
+
+---
+
+## Phase 17c — Publication package *(split out of Phase 17, 2026-07-28)*
+
+**Goal.** Make the work citable. Split into its own phase at the maintainer's
+request — a separate effort from the engine/collaboration hygiene of Phase 17,
+run on the maintainer's own schedule rather than folded into an agent-driven
+gate.
+
+**Deliverables.**
 - **Publication package**: arXiv (cs.GT) preprint built from
   `simultaneous_chess_spec_v1.md` + `INVARIANTS.md`, with the Zenodo DOI
   deposit covering the tagged engine release and the campaign report.
@@ -500,13 +522,15 @@ citable.
 - Community distribution (chessvariants.com, BoardGameGeek) stays deferred
   until a playable client exists, per the existing decision.
 
-**DoD.** CI green on a test PR and required for merge; `CONTRIBUTING.md`
-reviewed; preprint compiles and the Zenodo deposit resolves; the tagged
+**DoD.** Preprint compiles and the Zenodo deposit resolves; the tagged
 release's `RuleSet.fingerprint()` is recorded in the deposit metadata.
 
-> #### ⛔ COMMIT GATE 17
-> **Suggested message:** `ci: local gate on PRs; docs: contributing, collaboration scope, publication package`
+> #### ⛔ COMMIT GATE 17c
+> **Suggested message:** `docs: arXiv preprint + Zenodo deposit for the tagged v1.1 release`
 > **STOP.**
+
+**Status: deferred to the maintainer, to run as a separate effort.** Not
+started; no agent work expected here unless explicitly requested.
 
 ---
 
@@ -596,8 +620,9 @@ for 17b and belongs to whichever follow-up sub-phase the ruling opens.
 | Play through NAT; written wire protocol for the app | Gate 15c |
 | Replayable, citable game records | Gate 15d |
 | A window a non-technical player can use | Gate 16 |
-| Repository safe for a second contributor; work citable | Gate 17 |
+| Repository safe for a second contributor | Gate 17 |
 | King-cooldown-exemption exploit measured; ruling requested | Gate 17b |
+| Work citable (arXiv + Zenodo) | Gate 17c |
 
 ## Recommended sequencing
 
