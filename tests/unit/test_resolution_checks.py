@@ -17,6 +17,7 @@ from simult_chess.core.types import (
     Token,
     Trajectory,
 )
+from simult_chess.core.violation import Violation
 from simult_chess.invariants import resolution_checks as rc
 from simult_chess.rules.ruleset import RuleSet
 
@@ -56,7 +57,7 @@ def _empty_trace(**overrides: object) -> PhiTrace:
     return PhiTrace(**defaults)  # type: ignore[arg-type]
 
 
-def _all_clean(state_pre: State, result: PhiResult) -> list[object]:
+def _all_clean(state_pre: State, result: PhiResult) -> list[Violation]:
     return rc.check_all_trace(
         state_pre, result.state, result.trace, result.outcome, RULESET
     )
@@ -212,6 +213,172 @@ def test_check_r10_catches_fired_defender_that_also_moved() -> None:
 
     assert len(violations) == 1
     assert violations[0].invariant_id == "R10"
+
+
+def test_check_r13_cooldown_allows_a_capturing_king() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wr = Token(id=2, color=Color.WHITE, typ="r")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state_pre = build_state({wk: Square(4, 3), wr: Square(0, 0), bp: Square(4, 4)})
+    state_post = build_state(
+        {wk: Square(4, 4), wr: Square(0, 0)}, cooldown=frozenset({wk})
+    )
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(survivors=(king_move,), captured=((bp, Square(4, 4)),))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert violations == []
+
+
+def test_check_r13_cooldown_catches_a_king_cooled_without_capturing() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wr = Token(id=2, color=Color.WHITE, typ="r")
+    state_pre = build_state({wk: Square(4, 3), wr: Square(0, 0)})
+    state_post = build_state(
+        {wk: Square(4, 4), wr: Square(0, 0)}, cooldown=frozenset({wk})
+    )
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)  # flees to empty
+    trace = _empty_trace(survivors=(king_move,))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert len(violations) == 1
+    assert violations[0].invariant_id == "R13"
+
+
+def test_check_r13_cooldown_allows_a_recapturing_king() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wr = Token(id=2, color=Color.WHITE, typ="r")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state_pre = build_state({wk: Square(4, 3), wr: Square(0, 0), bp: Square(4, 4)})
+    state_post = build_state(
+        {wk: Square(4, 4), wr: Square(0, 0)}, cooldown=frozenset({wk})
+    )
+    reservation = Reservation(defender=wk, protege=wr, age=(0, 0))
+    fired = (
+        RecaptureFired(
+            defender=wk, captured=bp, square=Square(4, 4), reservation=reservation
+        ),
+    )
+    trace = _empty_trace(captured=((bp, Square(4, 4)),), fired=fired)
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert violations == []
+
+
+def test_check_r13_cooldown_catches_a_cooled_lone_king_even_if_it_captured() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    bp = Token(id=2, color=Color.BLACK, typ="p")
+    state_pre = build_state({wk: Square(4, 3), bp: Square(4, 4)})
+    state_post = build_state({wk: Square(4, 4)}, cooldown=frozenset({wk}))
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(survivors=(king_move,), captured=((bp, Square(4, 4)),))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert len(violations) == 1
+    assert violations[0].invariant_id == "R13"
+
+
+def test_check_r13_cooldown_catches_a_king_cooled_alongside_its_only_teammate() -> None:
+    """Regression companion to the seed-1008 self-play failure: cooling a
+    capturing king while its only teammate is *also* cooled leaves White
+    with zero uncooled pieces, exactly like the lone-king case."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wn = Token(id=2, color=Color.WHITE, typ="n")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    # The knight legitimately displaced this phase (a real square change), so
+    # only the king's cooldown is in question.
+    state_pre = build_state({wk: Square(4, 3), wn: Square(1, 5), bp: Square(4, 4)})
+    state_post = build_state(
+        {wk: Square(4, 4), wn: Square(2, 7)}, cooldown=frozenset({wk, wn})
+    )
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(survivors=(king_move,), captured=((bp, Square(4, 4)),))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert len(violations) == 1
+    assert violations[0].invariant_id == "R13"
+    assert "zero legal actions" in violations[0].detail
+
+
+def test_check_r13_cooldown_allows_a_legitimately_relaxed_king() -> None:
+    """Regression: the seed-23 self-play shape -- an uncooled pawn blocked
+    dead ahead with no diagonal target and too far from any own piece to
+    offer a Reserve pairing either -- correctly relaxes the capturing king
+    (production leaves it uncooled), and R13 must not flag that as a missed
+    cooldown: cooling it WOULD have stranded White, since the pawn's raw
+    geometric mobility doesn't translate into any legal action once cooldown
+    (and the lack of any Reserve target) is accounted for."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wp = Token(id=2, color=Color.WHITE, typ="p")
+    bp_captured = Token(id=3, color=Color.BLACK, typ="p")
+    bp_blocker = Token(id=4, color=Color.BLACK, typ="p")
+    state_pre = build_state(
+        {
+            wk: Square(2, 0), wp: Square(0, 3),
+            bp_captured: Square(4, 4), bp_blocker: Square(0, 4),
+        }
+    )
+    # King captures on e5 (Square(4,4)); pawn on a4 is blocked by the black
+    # pawn on a5, no diagonal target, and far enough from the king (file
+    # delta 4) that it offers no Reserve pairing either -- White has no
+    # legal program at all if the king is also cooled.
+    state_post = build_state(
+        {wk: Square(4, 4), wp: Square(0, 3), bp_blocker: Square(0, 4)},
+        cooldown=frozenset(),  # king correctly NOT cooled
+    )
+    king_move = _dm(wk, (Square(2, 0), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(
+        survivors=(king_move,), captured=((bp_captured, Square(4, 4)),)
+    )
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert violations == []
+
+
+def test_check_r13_cooldown_catches_a_capturing_king_that_should_have_cooled() -> None:
+    """The missed-cooldown direction: a capturing king left uncooled while
+    its colour still had a genuinely legal action available elsewhere is a
+    bug (a capture went unpunished)."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wp = Token(id=2, color=Color.WHITE, typ="p")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state_pre = build_state({wk: Square(4, 3), wp: Square(0, 1), bp: Square(4, 4)})
+    state_post = build_state(
+        {wk: Square(4, 4), wp: Square(0, 1)}, cooldown=frozenset()
+    )
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(survivors=(king_move,), captured=((bp, Square(4, 4)),))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, RULESET)
+
+    assert len(violations) == 1
+    assert "should have entered cooldown" in violations[0].detail
+
+
+def test_check_r13_cooldown_catches_any_cooled_king_under_the_old_variant() -> None:
+    """Under king_capture_cooldown=False (unconditional_king_immunity), a
+    cooled king is illegitimate no matter what -- it never gets that far."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wr = Token(id=2, color=Color.WHITE, typ="r")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    ruleset = RuleSet(king_capture_cooldown=False)
+    state_pre = build_state({wk: Square(4, 3), wr: Square(0, 0), bp: Square(4, 4)})
+    state_post = build_state(
+        {wk: Square(4, 4), wr: Square(0, 0)}, cooldown=frozenset({wk})
+    )
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    trace = _empty_trace(survivors=(king_move,), captured=((bp, Square(4, 4)),))
+
+    violations = rc.check_r13_cooldown(state_pre, state_post, trace, ruleset)
+
+    assert len(violations) == 1
+    assert violations[0].invariant_id == "R13"
 
 
 def test_check_r18_catches_a_resurrected_token() -> None:

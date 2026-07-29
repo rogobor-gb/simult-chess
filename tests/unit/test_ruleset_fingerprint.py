@@ -37,10 +37,12 @@ _FREEZE_DOCS = (
 )
 
 # The frozen provisional v1.1 fingerprint (maintainer rulings C1-C3,
-# 2026-07-24). Spelled out rather than recomputed: a test that recomputes the
-# expected value from the object under test cannot notice the object changing.
+# 2026-07-24), superseded by the Phase 17b addition of `king_capture_cooldown`
+# (2026-07-28, spec changelog). Spelled out rather than recomputed: a test
+# that recomputes the expected value from the object under test cannot notice
+# the object changing.
 FROZEN_V1_1_FINGERPRINT = (
-    "bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c"
+    "24932504dccb26f49cdf2adb2f9aa1e33df8fdcbf56733ac48e7950f1b5b53e2"
 )
 
 
@@ -101,6 +103,7 @@ def test_every_rule_bearing_field_moves_the_fingerprint() -> None:
         "pawn_same_square_fizzle_scope": "any_same_square",
         "annihilation_reading": "timed",
         "intermezzo_reading": "i",
+        "king_capture_cooldown": False,
     }
     assert set(perturbations) == {f.name for f in fields(baseline)}, (
         "a RuleSet field was added or renamed without deciding whether it "

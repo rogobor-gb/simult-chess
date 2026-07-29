@@ -342,3 +342,95 @@ def test_check_legal_program_accepts_a_simple_legal_program() -> None:
     state = build_state({pawn: Square(4, 1)})
     program = (_move(pawn, (Square(4, 1), Square(4, 2), Square(4, 3))),)
     assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+
+
+# --- has_any_legal_program (ruling 17b, 2026-07-28) ----------------------------
+
+
+def test_has_any_legal_program_true_for_an_uncooled_mobile_piece() -> None:
+    pawn = Token(id=1, color=Color.WHITE, typ="p")
+    state = build_state({pawn: Square(4, 1)})
+    assert legality.has_any_legal_program(state, Color.WHITE, RULESET)
+
+
+def test_has_any_legal_program_false_when_the_only_piece_is_cooled() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    state = build_state({king: Square(4, 4)}, cooldown=frozenset({king}))
+    assert not legality.has_any_legal_program(state, Color.WHITE, RULESET)
+
+
+def test_has_any_legal_program_false_when_uncooled_piece_is_geometrically_stuck() -> (
+    None
+):
+    """Regression: the exact seed-23 self-play shape -- an uncooled pawn
+    blocked dead ahead with no diagonal target, plus cooled everything else,
+    is correctly zero."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wn = Token(id=2, color=Color.WHITE, typ="n")
+    wp = Token(id=3, color=Color.WHITE, typ="p")
+    bp = Token(id=4, color=Color.BLACK, typ="p")
+    state = build_state(
+        {wk: Square(2, 1), wn: Square(4, 2), wp: Square(5, 3), bp: Square(5, 4)},
+        cooldown=frozenset({wk, wn}),
+    )
+    # Sanity: the cooldown-aware displacement helper agrees -- neither the
+    # cooled king/knight's raw mobility nor the stuck pawn counts.
+    assert not legality.has_any_legal_displacement(state, Color.WHITE)
+    assert not legality.has_any_legal_program(state, Color.WHITE, RULESET)
+
+
+def test_has_any_legal_displacement_ignores_a_cooled_kings_raw_mobility() -> None:
+    """Regression: the seed-774 self-play shape (record round-trip sweep) --
+    the king is the only piece with a pseudo-legal trajectory and is cooled
+    (ruling 17b); every other piece is geometrically stuck. Before this fix,
+    `has_any_legal_displacement` counted the cooled king's raw mobility as
+    "available", so L2 wrongly demanded a Move/Castle that L4 would then
+    reject -- no program satisfied both, and `phi` raised on a state that
+    should have had exactly one legal program (Reserve-only)."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wp = Token(id=2, color=Color.WHITE, typ="p")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state = build_state(
+        {wk: Square(5, 2), wp: Square(0, 3), bp: Square(0, 4)},
+        cooldown=frozenset({wk}),
+    )
+    assert not legality.has_any_legal_displacement(state, Color.WHITE)
+
+
+def test_has_any_legal_program_true_via_an_uncooled_reserve_pairing() -> None:
+    defender = Token(id=1, color=Color.WHITE, typ="r")
+    protege = Token(id=2, color=Color.WHITE, typ="p")
+    king = Token(id=3, color=Color.WHITE, typ="k")
+    state = build_state(
+        {defender: Square(0, 0), protege: Square(0, 4), king: Square(4, 4)},
+        cooldown=frozenset({king}),  # only the king is stuck
+    )
+    assert legality.has_any_legal_program(state, Color.WHITE, RULESET)
+
+
+def test_has_any_legal_program_true_via_cancel_when_a_reservation_stands() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    defender = Token(id=2, color=Color.WHITE, typ="r")
+    protege = Token(id=3, color=Color.WHITE, typ="p")
+    reservation = Reservation(defender=defender, protege=protege, age=(0, 0))
+    state = build_state(
+        {king: Square(4, 4), defender: Square(0, 0), protege: Square(0, 4)},
+        # every mover stuck: Cancel (actor-less, spec) is the only way out.
+        cooldown=frozenset({king, defender, protege}),
+        reservations_white=(reservation,),
+    )
+    assert legality.has_any_legal_program(state, Color.WHITE, RULESET)
+
+
+def test_has_any_legal_program_ignores_cancel_when_disabled() -> None:
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    defender = Token(id=2, color=Color.WHITE, typ="r")
+    protege = Token(id=3, color=Color.WHITE, typ="p")
+    reservation = Reservation(defender=defender, protege=protege, age=(0, 0))
+    state = build_state(
+        {king: Square(4, 4), defender: Square(0, 0), protege: Square(0, 4)},
+        cooldown=frozenset({king, defender, protege}),
+        reservations_white=(reservation,),
+    )
+    ruleset = RuleSet(cancellation_enabled=False)
+    assert not legality.has_any_legal_program(state, Color.WHITE, ruleset)

@@ -12,11 +12,12 @@ from __future__ import annotations
 from collections.abc import Hashable, Mapping
 from typing import Literal
 
-from simult_chess.core import geometry
+from simult_chess.core import geometry, legality
 from simult_chess.core.moves import DeclaredMove
 from simult_chess.core.stages.annihilate import AnnihilationResult
 from simult_chess.core.stages.defense import DefenseResult
 from simult_chess.core.types import (
+    Bookkeeping,
     CastlingRights,
     Color,
     PieceType,
@@ -67,16 +68,139 @@ def compute_displaced_tokens(
     return frozenset(token for token in final_board if token.id in displaced_ids)
 
 
+def king_capture_candidates(
+    state: State,
+    survivors: tuple[DeclaredMove, ...],
+    defense_result: DefenseResult,
+) -> frozenset[int]:
+    """King ids whose own action captured an enemy this phase.
+
+    Ruling 17b (2026-07-28), spec §7. A king is a candidate iff *it* captured
+    — directly (its declared destination held an enemy at declaration, and
+    that enemy is among ``defense_result.captured_tokens``) or by firing a
+    reservation as a recapturing defender (``defense_result.fired``). Fleeing
+    is never a candidate: a king that simply moved to an empty square costs
+    nothing, matching the original "must always be able to move" mobility
+    guarantee.
+
+    These are *candidates* only — :func:`compute_cooldown` applies the
+    "never leave a colour with zero uncooled pieces" safety valve, which
+    needs the full live roster and the other-piece cooldown outcome to
+    evaluate, neither of which this function has visibility into.
+    """
+    declared_occupant = geometry.occupant_lookup(state.board)
+    captured_tokens = defense_result.captured_tokens
+    direct = {
+        move.token.id
+        for move in survivors
+        if move.token.typ == "k"
+        and (victim := declared_occupant(move.trajectory.destination)) is not None
+        and victim in captured_tokens
+    }
+    fired = {
+        recapture.defender.id
+        for recapture in defense_result.fired
+        if recapture.defender.typ == "k"
+    }
+    return frozenset(direct | fired)
+
+
 def compute_cooldown(
     displaced_tokens: frozenset[Token],
     recapturer_ids: frozenset[int],
+    king_capture_candidate_ids: frozenset[int],
+    final_board: Mapping[Token, Square],
     ruleset: RuleSet,
 ) -> frozenset[Token]:
-    """R13 — displaced tokens minus pawns/kings; recapturers gated by a RuleSet flag."""
+    """R13 — displaced tokens minus pawns (always) and kings (ordinarily).
+
+    Pawns are always exempt. A non-pawn, non-king displaced token is cooled,
+    with recapturers further gated by ``ruleset.recapture_cooldown``.
+
+    A king in ``king_capture_candidate_ids`` (:func:`king_capture_candidates`,
+    ruling 17b, 2026-07-28) is *also* cooled — unless doing so would leave its
+    colour with **zero uncooled live tokens**, spec §7's "must always be able
+    to move" guarantee: a lone king is the simplest instance, but the same
+    rule equally covers a king whose only other piece just happens to already
+    be cooled from an earlier move (verified against real self-play: a
+    30-game sweep produced exactly this — a king that captured while its only
+    other piece, a knight, was still cooled from a prior displacement).
+    ``ruleset.king_capture_cooldown`` off makes ``king_capture_candidate_ids``
+    irrelevant (the caller passes an empty set; nothing here re-checks the
+    flag, since an empty candidate set already reproduces the old behaviour).
+    """
     eligible = displaced_tokens
     if not ruleset.recapture_cooldown:
         eligible = frozenset(t for t in eligible if t.id not in recapturer_ids)
-    return frozenset(t for t in eligible if t.typ not in ("p", "k"))
+    non_king_cooldown = frozenset(t for t in eligible if t.typ not in ("p", "k"))
+
+    if not king_capture_candidate_ids:
+        return non_king_cooldown
+
+    cooled_ids_by_color: dict[Color, set[int]] = {}
+    for token in non_king_cooldown:
+        cooled_ids_by_color.setdefault(token.color, set()).add(token.id)
+
+    king_cooldown: set[Token] = set()
+    for king in final_board:
+        if king.typ != "k" or king.id not in king_capture_candidate_ids:
+            continue
+        live_ids = {t.id for t in final_board if t.color == king.color}
+        cooled_ids = cooled_ids_by_color.get(king.color, set()) | {king.id}
+        if cooled_ids != live_ids:  # someone of this colour stays uncooled
+            king_cooldown.add(king)
+
+    return non_king_cooldown | frozenset(king_cooldown)
+
+
+def relax_king_cooldown_if_stranding(
+    cooldown: frozenset[Token],
+    final_board: Mapping[Token, Square],
+    final_reservations_white: tuple[Reservation, ...],
+    final_reservations_black: tuple[Reservation, ...],
+    castling_rights: CastlingRights,
+    ruleset: RuleSet,
+) -> frozenset[Token]:
+    """Undo a king's cooldown if it would strand its colour with zero legal
+    actions (ruling 17b, 2026-07-28).
+
+    :func:`compute_cooldown`'s own "zero uncooled tokens" filter is cheap but
+    only *necessary*, not *sufficient*: an uncooled piece can still have no
+    legal action of its own (blocked, no captures, no valid Reserve pairing)
+    — a 30-game self-play sweep hit exactly this in practice. This asks the
+    full, correct existence question, `legality.has_any_legal_program`,
+    against the actual post-phase position, and relaxes (removes from
+    cooldown) exactly the cooled kings whose colour would otherwise be
+    stranded — falling back to the pre-17b behaviour for that king alone,
+    which can never be a worse outcome than the engine already guaranteed
+    before this ruling existed.
+    """
+    cooled_king_colors = {t.color for t in cooldown if t.typ == "k"}
+    if not cooled_king_colors:
+        return cooldown
+
+    hypothetical_state = State(
+        board=final_board,
+        cooldown=cooldown,
+        reservations_white=final_reservations_white,
+        reservations_black=final_reservations_black,
+        bookkeeping=Bookkeeping(
+            castling_rights=castling_rights,
+            repetition_ledger={},
+            no_progress_counter=0,
+            phase_index=0,
+        ),
+    )
+    stranded_colors = {
+        color
+        for color in cooled_king_colors
+        if not legality.has_any_legal_program(hypothetical_state, color, ruleset)
+    }
+    if not stranded_colors:
+        return cooldown
+    return frozenset(
+        t for t in cooldown if not (t.typ == "k" and t.color in stranded_colors)
+    )
 
 
 def update_castling_rights(

@@ -14,7 +14,7 @@ something observable in a single trace — it has no runtime check here.
 
 from __future__ import annotations
 
-from simult_chess.core import geometry
+from simult_chess.core import geometry, legality
 from simult_chess.core.collision import edge_conflict, vertex_conflict
 from simult_chess.core.moves import DeclaredMove
 from simult_chess.core.phi import PhiTrace
@@ -24,8 +24,6 @@ from simult_chess.core.types import State
 from simult_chess.core.violation import Violation
 from simult_chess.referee.serialize import public_position_key
 from simult_chess.rules.ruleset import RuleSet
-
-_COOLDOWN_EXEMPT_TYPES = frozenset({"p", "k"})
 
 
 def check_r1_fizzle_f1(state_pre: State, trace: PhiTrace) -> list[Violation]:
@@ -173,19 +171,81 @@ def check_r12_cascade_termination(state_pre: State, trace: PhiTrace) -> list[Vio
     return []
 
 
-def check_r13_cooldown(state_pre: State, state_post: State) -> list[Violation]:
-    """R13 — every cooled token displaced this phase and is neither pawn nor king."""
+def _king_capture_candidates(state_pre: State, trace: PhiTrace) -> frozenset[int]:
+    """Independent re-derivation of `closure.king_capture_candidates`.
+
+    Deliberately not a call into `core.stages.closure` — this module's whole
+    point is to catch a corrupted Φ by re-deriving properties independently,
+    not by asking production code to grade its own homework.
+    """
+    declared_occupant = geometry.occupant_lookup(state_pre.board)
+    captured_tokens = {token for token, _square in trace.captured}
+    direct = {
+        move.token.id
+        for move in trace.survivors
+        if move.token.typ == "k"
+        and (victim := declared_occupant(move.trajectory.destination)) is not None
+        and victim in captured_tokens
+    }
+    fired = {r.defender.id for r in trace.fired if r.defender.typ == "k"}
+    return frozenset(direct | fired)
+
+
+def check_r13_cooldown(
+    state_pre: State, state_post: State, trace: PhiTrace, ruleset: RuleSet
+) -> list[Violation]:
+    """R13 — every cooled token displaced this phase; pawns are never cooled;
+    a king is cooled only if it captured this phase (ruling 17b, 2026-07-28)
+    *and* cooling it does not strand its colour with zero legal actions —
+    the same `legality.has_any_legal_program` existence question
+    `core.stages.closure.relax_king_cooldown_if_stranding` answers, not the
+    cheaper-but-insufficient "some token stays uncooled" heuristic (a
+    self-play sweep found an uncooled piece that was itself geometrically
+    stuck). Checked in both directions: a cooled king must be justified, and
+    a capturing king that stayed *uncooled* must have been legitimately
+    exempted for that same reason (otherwise a capture went unpunished)."""
     violations: list[Violation] = []
     pre_by_id = {token.id: square for token, square in state_pre.board.items()}
+    candidates = (
+        _king_capture_candidates(state_pre, trace)
+        if ruleset.king_capture_cooldown
+        else frozenset()
+    )
+    cooled_ids = {t.id for t in state_post.cooldown}
+
     for token in state_post.cooldown:
-        if token.typ in _COOLDOWN_EXEMPT_TYPES:
-            detail = f"cooled token {token.id} is pawn/king"
-            violations.append(Violation("R13", detail))
+        if token.typ == "p":
+            violations.append(Violation("R13", f"cooled token {token.id} is a pawn"))
+            continue
+        if token.typ == "k":
+            if token.id not in candidates:
+                detail = f"cooled king {token.id} did not capture this phase"
+                violations.append(Violation("R13", detail))
+            elif not legality.has_any_legal_program(state_post, token.color, ruleset):
+                detail = (
+                    f"cooled king {token.id} strands its colour with zero "
+                    "legal actions"
+                )
+                violations.append(Violation("R13", detail))
             continue
         post_square = state_post.board.get(token)
         pre_square = pre_by_id.get(token.id)
         if pre_square is not None and pre_square == post_square:
             detail = f"cooled token {token.id} did not displace this phase"
+            violations.append(Violation("R13", detail))
+
+    for king in state_post.board:
+        if king.typ != "k" or king.id not in candidates or king.id in cooled_ids:
+            continue
+        hypothetical_state = State(
+            board=state_post.board,
+            cooldown=state_post.cooldown | {king},
+            reservations_white=state_post.reservations_white,
+            reservations_black=state_post.reservations_black,
+            bookkeeping=state_post.bookkeeping,
+        )
+        if legality.has_any_legal_program(hypothetical_state, king.color, ruleset):
+            detail = f"capturing king {king.id} should have entered cooldown"
             violations.append(Violation("R13", detail))
     return violations
 
@@ -328,7 +388,7 @@ def check_all_trace(
         *check_r9_defender_fires_once(trace),
         *check_r10_mover_as_defender_forbidden(trace),
         *check_r12_cascade_termination(state_pre, trace),
-        *check_r13_cooldown(state_pre, state_post),
+        *check_r13_cooldown(state_pre, state_post, trace, ruleset),
         *check_r14_promotion(state_pre, state_post, trace),
         *check_r16_fizzled_inertness(state_pre, state_post, trace),
         *check_r17_cancellation(state_post, trace),

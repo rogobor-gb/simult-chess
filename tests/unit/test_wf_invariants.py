@@ -106,19 +106,103 @@ def test_wf2_type_constancy_flags_unrecorded_type_change() -> None:
     assert len(violations) == 1 and violations[0].invariant_id == "WF2"
 
 
-def test_wf3_rejects_cooled_pawn_and_king() -> None:
+def test_wf3_rejects_cooled_pawn_always() -> None:
     pawn = Token(id=1, color=Color.WHITE, typ="p")
-    king = Token(id=2, color=Color.WHITE, typ="k")
     knight = Token(id=3, color=Color.WHITE, typ="n")
     state = State(
-        board={pawn: Square(0, 1), king: Square(4, 0), knight: Square(1, 0)},
-        cooldown=frozenset({pawn, king, knight}),
+        board={pawn: Square(0, 1), knight: Square(1, 0)},
+        cooldown=frozenset({pawn}),  # knight stays uncooled: isolates the pawn check
         reservations_white=(),
         reservations_black=(),
         bookkeeping=make_bookkeeping(),
     )
-    violations = check_wf3_cooldown_membership(state)
-    assert len(violations) == 2  # pawn (id=1) and king (id=2) flagged; knight is fine
+    violations = check_wf3_cooldown_membership(state, RuleSet())
+    assert len(violations) == 1
+    assert "'p'" in violations[0].detail
+
+
+def test_wf3_rejects_cooled_king_under_the_unconditional_immunity_variant() -> None:
+    """Pre-17b behaviour, still reachable via king_capture_cooldown=False."""
+    king = Token(id=2, color=Color.WHITE, typ="k")
+    knight = Token(id=3, color=Color.WHITE, typ="n")
+    state = State(
+        board={king: Square(4, 0), knight: Square(1, 0)},
+        cooldown=frozenset({king}),  # knight stays uncooled: isolates the king check
+        reservations_white=(),
+        reservations_black=(),
+        bookkeeping=make_bookkeeping(),
+    )
+    ruleset = RuleSet(king_capture_cooldown=False)
+    violations = check_wf3_cooldown_membership(state, ruleset)
+    assert len(violations) == 1
+    assert "'k'" in violations[0].detail
+
+
+def test_wf3_allows_a_cooled_non_lone_king_under_the_default_ruling() -> None:
+    """Ruling 17b default: WF3 alone can't tell if the king legitimately
+    captured (that needs the trace -- R13 verifies it), so it must not
+    reject a cooled king with an uncooled teammate on the board."""
+    king = Token(id=2, color=Color.WHITE, typ="k")
+    knight = Token(id=3, color=Color.WHITE, typ="n")
+    state = State(
+        board={king: Square(4, 0), knight: Square(1, 0)},
+        cooldown=frozenset({king}),
+        reservations_white=(),
+        reservations_black=(),
+        bookkeeping=make_bookkeeping(),
+    )
+    assert check_wf3_cooldown_membership(state, RuleSet()) == []
+
+
+def test_wf3_rejects_a_cooled_lone_king_regardless_of_ruleset() -> None:
+    """The safety valve is absolute: a lone king cooled would have zero
+    legal actions next phase, which must never happen under any variant."""
+    king = Token(id=2, color=Color.WHITE, typ="k")
+    state = State(
+        board={king: Square(4, 0)},
+        cooldown=frozenset({king}),
+        reservations_white=(),
+        reservations_black=(),
+        bookkeeping=make_bookkeeping(),
+    )
+    violations = check_wf3_cooldown_membership(state, RuleSet())
+    assert len(violations) == 1
+    assert "every live token cooled" in violations[0].detail
+
+
+def test_wf3_rejects_a_colour_left_fully_cooled_with_multiple_pieces() -> None:
+    """Regression companion to test_closure.py's seed-1008 case: the same
+    'zero uncooled tokens' guarantee holds even when it's not literally a
+    lone king -- a king plus an already-cooled teammate is just as fatal."""
+    king = Token(id=2, color=Color.WHITE, typ="k")
+    knight = Token(id=3, color=Color.WHITE, typ="n")
+    state = State(
+        board={king: Square(4, 0), knight: Square(1, 0)},
+        cooldown=frozenset({king, knight}),
+        reservations_white=(),
+        reservations_black=(),
+        bookkeeping=make_bookkeeping(),
+    )
+    violations = check_wf3_cooldown_membership(state, RuleSet())
+    assert len(violations) == 1
+    assert "every live token cooled" in violations[0].detail
+
+
+def test_wf3_allows_a_fully_cooled_colour_with_no_king_left() -> None:
+    """Regression: seed-20084 self-play (matrix_1ply vs random_legal). A
+    colour whose king was captured this very phase (terminal, T1) legitimately
+    has nothing left to do -- its remaining, fully-cooled pieces are not a
+    stranding bug, just a lost side. Must not be confused with the
+    still-has-a-king cases above."""
+    bishop = Token(id=22, color=Color.BLACK, typ="b")
+    state = State(
+        board={bishop: Square(7, 7)},
+        cooldown=frozenset({bishop}),
+        reservations_white=(),
+        reservations_black=(),
+        bookkeeping=make_bookkeeping(),
+    )
+    assert check_wf3_cooldown_membership(state, RuleSet()) == []
 
 
 def test_wf3_rejects_dead_token_in_cooldown() -> None:
@@ -130,7 +214,7 @@ def test_wf3_rejects_dead_token_in_cooldown() -> None:
         reservations_black=(),
         bookkeeping=make_bookkeeping(),
     )
-    violations = check_wf3_cooldown_membership(state)
+    violations = check_wf3_cooldown_membership(state, RuleSet())
     assert len(violations) == 1
 
 

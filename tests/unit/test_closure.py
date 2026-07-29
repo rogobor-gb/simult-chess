@@ -77,13 +77,66 @@ def test_compute_displaced_tokens_excludes_captured_includes_recapturer() -> Non
     assert stationary not in displaced
 
 
-def test_compute_cooldown_excludes_pawns_and_kings() -> None:
+def test_compute_cooldown_excludes_pawns_and_non_capturing_king() -> None:
     rook = Token(id=1, color=Color.WHITE, typ="r")
     pawn = Token(id=2, color=Color.WHITE, typ="p")
     king = Token(id=3, color=Color.WHITE, typ="k")
     displaced = frozenset({rook, pawn, king})
-    cooldown = closure.compute_cooldown(displaced, frozenset(), RULESET)
+    final_board = {rook: Square(0, 4), pawn: Square(0, 1), king: Square(4, 0)}
+    # king.id absent from the candidate set: it moved but did not capture.
+    cooldown = closure.compute_cooldown(
+        displaced, frozenset(), frozenset(), final_board, RULESET
+    )
     assert cooldown == {rook}
+
+
+def test_compute_cooldown_cools_a_capturing_king_when_flagged() -> None:
+    king = Token(id=3, color=Color.WHITE, typ="k")
+    rook = Token(id=4, color=Color.WHITE, typ="r")  # keeps White non-lone
+    displaced = frozenset({king})
+    final_board = {king: Square(4, 4), rook: Square(0, 0)}
+    cooldown = closure.compute_cooldown(
+        displaced, frozenset(), frozenset({king.id}), final_board, RULESET
+    )
+    assert cooldown == {king}
+
+
+def test_compute_cooldown_exempts_a_lone_capturing_king() -> None:
+    """The safety valve: cooling a colour's only piece would leave zero
+    legal actions next phase (L1 always demands one) -- never allowed."""
+    king = Token(id=3, color=Color.WHITE, typ="k")
+    displaced = frozenset({king})
+    final_board = {king: Square(4, 4)}  # White's only live token
+    cooldown = closure.compute_cooldown(
+        displaced, frozenset(), frozenset({king.id}), final_board, RULESET
+    )
+    assert cooldown == frozenset()
+
+
+def test_compute_cooldown_exempts_king_when_teammate_also_cooled() -> None:
+    """Regression: a 30-game self-play sweep (seed 1008) hit exactly this --
+    a king captured while its only other piece (a knight, here recapturing
+    and hence itself entering cooldown) would also end up cooled. Cooling
+    both left that player with zero legal actions next phase (an L1
+    violation: no program of length >= 1 existed). The lone-king check alone
+    would not have caught this -- White has two pieces, it's just that both
+    would end up cooled -- so the real predicate is "would every live token
+    of this colour be cooled", not just "is the king literally alone".
+    """
+    king = Token(id=3, color=Color.WHITE, typ="k")
+    knight = Token(id=4, color=Color.WHITE, typ="n")
+    displaced = frozenset({king, knight})
+    final_board = {king: Square(4, 4), knight: Square(1, 5)}
+    cooldown = closure.compute_cooldown(
+        displaced,
+        frozenset({knight.id}),  # knight is a recapturer, stays cooled
+        frozenset({king.id}),  # king is a capture candidate
+        final_board,
+        RULESET,
+    )
+    # Both are candidates for cooldown, but cooling both leaves White with
+    # nothing uncooled -- the king must be exempted.
+    assert cooldown == {knight}
 
 
 def test_compute_cooldown_gates_recapturers_when_disabled() -> None:
@@ -91,8 +144,119 @@ def test_compute_cooldown_gates_recapturers_when_disabled() -> None:
     bishop = Token(id=2, color=Color.WHITE, typ="b")
     ruleset = RuleSet(recapture_cooldown=False)
     displaced = frozenset({rook, bishop})
-    cooldown = closure.compute_cooldown(displaced, frozenset({bishop.id}), ruleset)
+    final_board = {rook: Square(0, 4), bishop: Square(2, 2)}
+    cooldown = closure.compute_cooldown(
+        displaced, frozenset({bishop.id}), frozenset(), final_board, ruleset
+    )
     assert cooldown == {rook}
+
+
+# --- king_capture_candidates (ruling 17b, 2026-07-28) --------------------------
+
+
+def test_king_capture_candidates_flags_a_direct_capturing_king() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state = build_state({wk: Square(4, 3), bp: Square(4, 4)})
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)
+    defense_result = DefenseResult(
+        captured=((bp, Square(4, 4)),), fired=(), occupancy={wk: Square(4, 4)}
+    )
+    ids = closure.king_capture_candidates(state, (king_move,), defense_result)
+    assert ids == {wk.id}
+
+
+def test_king_capture_candidates_ignores_a_non_capturing_king_move() -> None:
+    """Fleeing is always free -- only a capture is a candidate."""
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    state = build_state({wk: Square(4, 3)})
+    king_move = _dm(wk, (Square(4, 3), Square(4, 4)), Color.WHITE)  # empty square
+    defense_result = DefenseResult(captured=(), fired=(), occupancy={wk: Square(4, 4)})
+    ids = closure.king_capture_candidates(state, (king_move,), defense_result)
+    assert ids == frozenset()
+
+
+def test_king_capture_candidates_flags_a_king_that_fires_a_recapture() -> None:
+    wk = Token(id=1, color=Color.WHITE, typ="k")
+    wr = Token(id=2, color=Color.WHITE, typ="r")
+    bp = Token(id=3, color=Color.BLACK, typ="p")
+    state = build_state({wk: Square(4, 3), wr: Square(0, 0), bp: Square(4, 4)})
+    defense_result = DefenseResult(
+        captured=((bp, Square(4, 4)),),
+        fired=(
+            RecaptureFired(
+                defender=wk,
+                captured=bp,
+                square=Square(4, 4),
+                reservation=Reservation(defender=wk, protege=wr, age=(0, 0)),
+            ),
+        ),
+        occupancy={wk: Square(4, 4), wr: Square(0, 0)},
+    )
+    ids = closure.king_capture_candidates(state, (), defense_result)
+    assert ids == {wk.id}
+
+
+# --- relax_king_cooldown_if_stranding (ruling 17b, 2026-07-28) ----------------
+
+
+def test_relax_king_cooldown_leaves_a_still_mobile_colour_alone() -> None:
+    """A cooled king whose colour still has a genuinely mobile piece is left
+    cooled -- nothing to relax."""
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    pawn = Token(id=2, color=Color.WHITE, typ="p")
+    final_board = {king: Square(4, 4), pawn: Square(4, 1)}
+    cooldown = frozenset({king})
+    relaxed = closure.relax_king_cooldown_if_stranding(
+        cooldown, final_board, (), (), CastlingRights(), RULESET
+    )
+    assert relaxed == cooldown
+
+
+def test_relax_king_cooldown_frees_a_geometrically_stranded_king() -> None:
+    """Regression: the exact seed-23 self-play shape -- an uncooled pawn
+    blocked dead ahead with no diagonal target, plus a cooled king and
+    knight, leaves White with zero legal actions unless the king is freed."""
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    knight = Token(id=2, color=Color.WHITE, typ="n")
+    pawn = Token(id=3, color=Color.WHITE, typ="p")
+    black_pawn = Token(id=4, color=Color.BLACK, typ="p")
+    final_board = {
+        king: Square(2, 1),
+        knight: Square(4, 2),
+        pawn: Square(5, 3),
+        black_pawn: Square(5, 4),
+    }
+    cooldown = frozenset({king, knight})
+    relaxed = closure.relax_king_cooldown_if_stranding(
+        cooldown, final_board, (), (), CastlingRights(), RULESET
+    )
+    assert relaxed == frozenset({knight})  # king freed; knight stays cooled
+
+
+def test_relax_king_cooldown_no_op_when_no_king_is_cooled() -> None:
+    rook = Token(id=1, color=Color.WHITE, typ="r")
+    final_board = {rook: Square(0, 0)}
+    cooldown = frozenset({rook})
+    relaxed = closure.relax_king_cooldown_if_stranding(
+        cooldown, final_board, (), (), CastlingRights(), RULESET
+    )
+    assert relaxed == cooldown
+
+
+def test_relax_king_cooldown_via_a_cancel_when_movement_is_exhausted() -> None:
+    """A standing reservation (Cancel is actor-less, never cooldown-blocked)
+    is enough on its own to avoid stranding -- the king stays cooled."""
+    king = Token(id=1, color=Color.WHITE, typ="k")
+    defender = Token(id=2, color=Color.WHITE, typ="r")
+    protege = Token(id=3, color=Color.WHITE, typ="p")
+    final_board = {king: Square(4, 4), defender: Square(0, 0), protege: Square(0, 4)}
+    cooldown = frozenset({king, defender, protege})
+    reservation = Reservation(defender=defender, protege=protege, age=(0, 0))
+    relaxed = closure.relax_king_cooldown_if_stranding(
+        cooldown, final_board, (reservation,), (), CastlingRights(), RULESET
+    )
+    assert relaxed == cooldown  # Cancel is available; nothing needs relaxing
 
 
 def test_update_castling_rights_king_move_revokes_both_sides() -> None:

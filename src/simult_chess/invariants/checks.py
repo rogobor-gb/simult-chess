@@ -11,12 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Set as AbstractSet
 
-from simult_chess.core.types import Color, State
+from simult_chess.core.types import Color, State, Token
 from simult_chess.core.violation import Violation
 from simult_chess.rules.ruleset import RuleSet
 
 _VALID_TYPES = frozenset({"p", "n", "b", "r", "q", "k"})
-_COOLDOWN_EXEMPT_TYPES = frozenset({"p", "k"})
 _CASTLING_FLANK_FIELDS = (
     "white_kingside",
     "white_queenside",
@@ -78,15 +77,50 @@ def check_wf2_type_constancy(
     return violations
 
 
-def check_wf3_cooldown_membership(state: State) -> list[Violation]:
-    """WF3 — cooldown tokens are live and neither pawn nor king."""
+def check_wf3_cooldown_membership(state: State, ruleset: RuleSet) -> list[Violation]:
+    """WF3 — cooldown tokens are live; pawns are never cooled.
+
+    A king is cooled only if ``ruleset.king_capture_cooldown`` allows it
+    (ruling 17b, 2026-07-28) — WF3, a single-state check, cannot tell *why* a
+    given king is cooled (that needs the trace; R13 verifies it), so under
+    that setting it does not otherwise restrict kings.
+
+    Regardless of the setting: no colour **that still has a king** may ever
+    have *every* one of its live tokens cooled simultaneously. Under the
+    pre-17b unconditional exemption this was automatic (the king was always
+    exempt, so always uncooled); under the new default it is an active
+    guarantee that
+    :func:`~simult_chess.core.stages.closure.compute_cooldown`'s safety valve
+    exists specifically to uphold — a colour left with zero uncooled tokens
+    would have no legal program next phase (L1 always demands one). The
+    king-still-live qualifier matters at a terminal state: a king captured
+    this phase legitimately leaves its colour's remaining tokens (if any)
+    with nothing to do, since the game is already over (T1) — that is not a
+    stranding bug, so it must not be flagged as one (mirrors WF4's own
+    `allow_terminal` framing for the zero-kings case).
+    """
     violations: list[Violation] = []
     live = set(state.board.keys())
-    for token in state.cooldown:
+    cooled = state.cooldown
+    for token in cooled:
         if token not in live:
             violations.append(Violation("WF3", f"cooled token {token.id} is not live"))
-        elif token.typ in _COOLDOWN_EXEMPT_TYPES:
-            detail = f"cooled token {token.id} has exempt type {token.typ!r}"
+            continue
+        if token.typ == "p":
+            violations.append(
+                Violation("WF3", f"cooled token {token.id} has exempt type 'p'")
+            )
+        elif token.typ == "k" and not ruleset.king_capture_cooldown:
+            detail = f"cooled token {token.id} has exempt type 'k'"
+            violations.append(Violation("WF3", detail))
+
+    by_color: dict[Color, list[Token]] = {}
+    for token in live:
+        by_color.setdefault(token.color, []).append(token)
+    for color, tokens in by_color.items():
+        has_king = any(t.typ == "k" for t in tokens)
+        if has_king and all(t in cooled for t in tokens):
+            detail = f"{color.value} has every live token cooled (zero legal actions)"
             violations.append(Violation("WF3", detail))
     return violations
 
@@ -210,7 +244,7 @@ def check_all_state(
     return [
         *check_wf1_occupancy_injectivity(state),
         *check_wf2_domain(state),
-        *check_wf3_cooldown_membership(state),
+        *check_wf3_cooldown_membership(state, ruleset),
         *check_wf4_king_count(state, allow_terminal=allow_terminal),
         *check_wf5_reservation_order(state),
         *check_wf6_reservation_referential_integrity(state),

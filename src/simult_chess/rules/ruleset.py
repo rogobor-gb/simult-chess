@@ -44,7 +44,10 @@ class RuleSet:
     `RuleSet` or a swapped stage, never a fork. The freeze is **provisional**
     (ruling C3, extending A5): it asserts a versioned default, not equilibrium
     balance, and :meth:`fingerprint` is what makes a later revision detectable
-    rather than silent.
+    rather than silent -- exactly what happened when ``king_capture_cooldown``
+    was added post-freeze (Phase 17b, 2026-07-28): the fingerprint moved from
+    ``bf2bb9dab0f0…`` to ``24932504dccb…``, a real rules change made visible
+    rather than a silent drift.
 
     Every field must declare :data:`RULE_BEARING` or :data:`NOT_RULE_BEARING`
     metadata; a field declaring neither raises from :func:`ruleset_fingerprint`
@@ -93,6 +96,22 @@ class RuleSet:
         with no accompanying shift in the draw-cause breakdown. Couples:
         ``R7``, ``M4`` (flips ``M4`` from *true* to *order-dependent* under
         ``"i"``). Variant: ``attacker_sequenced_intermezzo``.
+    king_capture_cooldown : bool
+        Whether a king that captures (directly, or by firing a reservation as
+        a recapturing defender) enters :math:`C'` like any other piece. v1:
+        ``True`` (spec §7, ruling of Phase 17b, 2026-07-28: maintainer
+        playtest of the Phase 16 window surfaced that an always-immune king
+        could evade an attacker and then capture it back at zero risk --
+        "double movement power" -- since fleeing costs nothing and, unlike
+        every other piece, neither did striking back). A king's *non*-
+        capturing moves (including evasion) remain always exempt -- the
+        mobility guarantee is untouched; only the offensive follow-up now
+        costs a cooldown turn, symmetric with how every other piece already
+        pays for acting. A king that is its colour's only remaining live
+        token is exempt regardless (spec §7's original "must always be able
+        to move" guarantee must never leave a player with zero legal
+        actions). Couples: ``WF3``, ``R13``. Variant:
+        ``unconditional_king_immunity`` (the pre-17b behaviour).
 
     See Also
     --------
@@ -111,6 +130,7 @@ class RuleSet:
         default="B", metadata=RULE_BEARING
     )
     intermezzo_reading: IntermezzoReading = field(default="ii", metadata=RULE_BEARING)
+    king_capture_cooldown: bool = field(default=True, metadata=RULE_BEARING)
 
     def canonical_form(self) -> str:
         """The exact text :meth:`fingerprint` digests.
@@ -135,8 +155,8 @@ class RuleSet:
 
         Examples
         --------
-        >>> RuleSet().fingerprint()[:12]  # the frozen provisional v1.1 defaults
-        'bf2bb9dab0f0'
+        >>> RuleSet().fingerprint()[:12]  # v1.1 defaults + the 17b king ruling
+        '24932504dccb'
         """
         return ruleset_fingerprint(self)
 

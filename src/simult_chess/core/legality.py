@@ -63,14 +63,80 @@ def actors_of(action: Action, color: Color, state: State) -> tuple[Token, ...]:
 
 
 def has_any_legal_displacement(state: State, color: Color) -> bool:
-    """Whether `color` has any legal Move or Castle at all (L2 exception)."""
+    """Whether `color` has any legal Move or Castle at all (L2 exception).
+
+    Cooldown-aware (ruling 17b, 2026-07-28 fix): a cooled token contributes
+    no legal Move regardless of its raw geometric mobility, since L4 forbids
+    declaring it as an actor. Before king cooldown existed, this was
+    geometry-only and got away with it — pawns and kings, the two types most
+    often the *sole* geometrically-mobile piece, were both cooldown-exempt,
+    so "geometrically possible" and "actually declarable" always agreed for
+    them. Once a king can be cooled (ruling 17b), that agreement breaks: a
+    self-play sweep hit a state where the king was the only piece with a
+    pseudo-legal trajectory, cooled, and every other piece geometrically
+    stuck — this function said "a displacement exists" (true, geometrically),
+    L2 then required a Move/Castle in the program, and L4 rejected every
+    program containing one, leaving *no* legal program at all. Filtering
+    cooldown here closes that gap. See :func:`has_any_legal_program` for the
+    closed existence question this function deliberately does not answer
+    (Reserve/Cancel are out of scope for L2).
+    """
     for token in state.board:
-        if token.color is color and geometry.pseudo_legal_trajectories(state, token):
+        if (
+            token.color is color
+            and token not in state.cooldown
+            and geometry.pseudo_legal_trajectories(state, token)
+        ):
             return True
     sides: tuple[CastleSide, CastleSide] = ("king", "queen")
     for side in sides:
         if geometry.castle_move(state, color, side) is not None:
             return True
+    return False
+
+
+def has_any_legal_program(state: State, color: Color, ruleset: RuleSet) -> bool:
+    """Whether `color` has at least one legal 1..N-action program this phase.
+
+    Cooldown- and ruleset-aware, and — unlike
+    :func:`has_any_legal_displacement`, which only ever answers the narrower
+    Move/Castle-only question L2 needs — also covers Reserve and Cancel: this
+    is the *closed* question compute_cooldown's king safety valve (ruling
+    17b, 2026-07-28) needs — could this player construct any legal program at
+    all, given the proposed cooldown set? A castling king/rook is never
+    cooled if
+    `geometry.castle_move` finds it (rights intact ⇒ neither has ever
+    displaced ⇒ neither can be in cooldown), so no extra check is needed
+    there. A `Cancel`'s actor set is empty (`actors_of`), so it is never
+    blocked by cooldown — only by `ruleset.cancellation_enabled` (L6).
+    """
+    for token in state.board:
+        if (
+            token.color is color
+            and token not in state.cooldown
+            and geometry.pseudo_legal_trajectories(state, token)
+        ):
+            return True
+    sides: tuple[CastleSide, CastleSide] = ("king", "queen")
+    for side in sides:
+        if geometry.castle_move(state, color, side) is not None:
+            return True
+    if ruleset.cancellation_enabled and state.reservations(color):
+        return True
+    occupant = geometry.occupant_lookup(state.board)
+    for defender in state.board:
+        if defender.color is not color or defender in state.cooldown:
+            continue
+        origin = state.board[defender]
+        for protege in state.board:
+            if protege.color is not color or protege is defender:
+                continue
+            target = state.board[protege]
+            pattern = geometry.capturing_pattern_trajectory_at(
+                defender.typ, defender.color, origin, target, occupant
+            )
+            if pattern is not None:
+                return True
     return False
 
 

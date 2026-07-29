@@ -182,7 +182,6 @@ def phi(
     )
     displaced_ids = frozenset(t.id for t in displaced_tokens)
     recapturer_ids = frozenset(fired.defender.id for fired in defense_result.fired)
-    new_cooldown = closure.compute_cooldown(displaced_tokens, recapturer_ids, ruleset)
 
     captured_ids = frozenset(t.id for t in defense_result.captured_tokens)
     annihilated_ids = frozenset(
@@ -212,6 +211,36 @@ def phi(
     new_castling_rights = closure.update_castling_rights(
         state.bookkeeping.castling_rights, state, displaced_ids
     )
+
+    # king_capture_candidate_ids/new_cooldown come *after* reservations and
+    # castling rights are finalized above: the ruling 17b safety valve, once
+    # the cheap "zero uncooled tokens" filter inside compute_cooldown isn't
+    # enough (a self-play sweep found an uncooled-but-geometrically-stuck
+    # piece leaving zero legal actions anyway), needs the full post-state to
+    # ask the closed question via `legality.has_any_legal_program` — and
+    # neither reservations nor castling rights depend on cooldown, so
+    # computing them first is safe.
+    king_capture_candidate_ids = (
+        closure.king_capture_candidates(state, survivors, defense_result)
+        if ruleset.king_capture_cooldown
+        else frozenset()
+    )
+    new_cooldown = closure.compute_cooldown(
+        displaced_tokens,
+        recapturer_ids,
+        king_capture_candidate_ids,
+        final_board,
+        ruleset,
+    )
+    if king_capture_candidate_ids:
+        new_cooldown = closure.relax_king_cooldown_if_stranding(
+            new_cooldown,
+            final_board,
+            final_reservations_white,
+            final_reservations_black,
+            new_castling_rights,
+            ruleset,
+        )
 
     any_capture = bool(dead_ids)
     any_pawn_displacement = any(

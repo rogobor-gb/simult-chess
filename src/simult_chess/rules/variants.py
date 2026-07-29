@@ -1,17 +1,21 @@
-"""Named `RuleSet` variants (Phase 14, Gate 11b freeze).
+"""Named `RuleSet` variants (Phase 14, Gate 11b freeze; extended Phase 17b).
 
 The Phase 14 freeze (`docs/DEVELOPMENT_roadmap_v2.md`, maintainer rulings
 C1-C3) fixes every rule-bearing field of :class:`~simult_chess.rules.ruleset.RuleSet`
 at its Phase 11b campaign baseline. This module is the other half of that
 decision: **every rejected A/B arm value stays playable**, by name, without
 forking. A variant is a `RuleSet` (or a swapped stage implementation, see
-`rules/registry.py`) -- never a copy of the engine.
+`rules/registry.py`) -- never a copy of the engine. The same discipline
+applies to rulings made after the freeze (e.g. Phase 17b's
+``king_capture_cooldown``, 2026-07-28): the superseded value stays registered
+here rather than disappearing.
 
 Registration policy: a value belongs here iff it is a rule-bearing level that
-the campaign actually ran and the freeze declined. Levers with no registered
-stage implementation (``annihilation_reading="timed"``, spec §13.2, declined
-for v1) are deliberately absent -- naming them would promise a game that does
-not resolve.
+was actually run/considered and declined -- either a Phase 11b campaign arm,
+or a later ruling's superseded default. Levers with no registered stage
+implementation (``annihilation_reading="timed"``, spec §13.2, declined for v1)
+are deliberately absent -- naming them would promise a game that does not
+resolve.
 
 Stdlib only, like the rest of `rules/` (dev brief §0.6).
 """
@@ -42,8 +46,9 @@ class NamedVariant:
     summary : str
         What the variant changes, in rules terms.
     evidence : str
-        Why the freeze declined it (or, for the baseline, adopted it), traced
-        to `reports/campaign_v1.md`.
+        Why it was declined (or, for the baseline, adopted) -- traced to
+        `reports/campaign_v1.md` for a Phase 14 arm, or to the ruling itself
+        for a later addition such as Phase 17b's.
     """
 
     name: str
@@ -118,6 +123,19 @@ _VARIANTS: tuple[NamedVariant, ...] = (
         evidence="Draw rate +0.017 vs control, inside the ±0.027 MDE; the "
         "retrade runs the other way (horizon draws 0.311 -> 0.177). Declined "
         "(C2).",
+    ),
+    NamedVariant(
+        name="unconditional_king_immunity",
+        ruleset=replace(FROZEN_V1_1, king_capture_cooldown=False),
+        summary="The pre-17b default: a king never enters cooldown, capturing "
+        "or not -- unconditional exemption, same as every other engine before "
+        "2026-07-28.",
+        evidence="Superseded by Phase 17b (maintainer ruling, 2026-07-28): "
+        "playtest of the Phase 16 window showed the unconditional exemption "
+        "let a king evade an attack for free, then capture the attacker "
+        "(cooled from displacing to attack) with equally zero risk -- "
+        "'double movement power'. king_capture_cooldown=True closes the "
+        "second half only; evasion stays free either way.",
     ),
 )
 
