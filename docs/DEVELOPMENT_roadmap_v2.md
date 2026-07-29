@@ -1,4 +1,4 @@
-# DEVELOPMENT — Roadmap v2 (Phases 14–17)
+# DEVELOPMENT — Roadmap v2 (Phases 14–17, 17b, 19)
 
 *Third roadmap document. Agent-facing, same status as `DEVELOPMENT.md` (v1.0)
 and `DEVELOPMENT_addendum_v1.1.md` (v1.1): gitignored, not project
@@ -33,7 +33,10 @@ reasons that are independent of each other:
 
 Freeze first (Phase 14) because everything downstream binds to the frozen
 `RuleSet`; then make the session robust (Phase 15); then, optionally, a
-window (Phase 16); then collaboration and publication hygiene (Phase 17).
+window (Phase 16); then collaboration hygiene (Phase 17). Publication (Phase
+19) waits until after the learning track and human playtesting; a
+king-cooldown ruling (Phase 17b) landed out of sequence, triggered by
+playtesting the Phase 16 window rather than by the plan above.
 
 ---
 
@@ -68,6 +71,7 @@ These are decisions, not tasks. The agent must not pick a side.
 | **C4** | Time-control semantics (§15b) — the race-bonus rule | winner-take-all `b` / capped-difference `min(b, \|t_W − t_B\|)` / Fischer increment to both / none | capped-difference (see the analysis; winner-take-all is degenerate at the proposed calibration) |
 | **C5** | Flag-fall without an arbiter | self-adjudicating clock ledger (both peers compute it) vs advisory-only clock | self-adjudicating; it is derivable identically on both sides |
 | **C6** | Phase 16 (local window) — build or skip | Tk window / skip and go straight to the web client | build only if the maintainer wants a demo artifact; it is throwaway relative to the web app |
+| **C7** | Phase 17b — king-cooldown-exemption exploit ("double movement power": a king evades an attack for free, then captures the now-cooled attacker with equal impunity) | **C7a** status quo (no change) / **C7b** no-backtrack king rule / **C7c** king-capture-cooldown-after-being-targeted / **C7d** full king cooldown (remove the exemption entirely) / **Option E** capture-conditional king cooldown — the exemption narrows to non-capturing moves only; a fleeing king stays exempt, a king whose own action captures is cooled like any other piece, subject to a zero-legal-actions safety valve | status quo (C7a) |
 
 ### Rulings record (binding maintainer decisions)
 
@@ -80,6 +84,7 @@ These are decisions, not tasks. The agent must not pick a side.
 | **C4** | 2026-07-25 | **Capped-difference** race bonus, `β = min(b, |t_W − t_B|)`. Implemented as a registry so the rule is a parameter, not a rewrite. The maintainer notes this is a *starting* calibration to be revisited during playtest: (a) the "reflex-race" degeneracy is a limiting-case argument, not a claim that intermediate humans will actually rush a 3-minute game — good time use beats a fast opponent; (b) `b = 2 s` may simply be too large; (c) a candidate refinement to register alongside capped-difference is a **dead-zone**: award no bonus at all when the two commit times are within some threshold (e.g. 5 s) of each other, so the bonus only rewards a *decisive* speed gap. Register it as a selectable bonus rule; do not make it the default yet. |
 | **C5** | 2026-07-25 | **Self-adjudicating** clock ledger (both peers compute it identically). Explicitly a testing-grade solution, not a tournament-grade one; a tamper-proof arbiter is out of scope for now. |
 | **C6** | 2026-07-25 | **Build the Tk window** as throwaway, *on the condition* that it is cleanly separated from the core effort (the game's definition/testing and the learning system). The maintainer is not the app developer and the window must never entangle the engine. The two engine-side pieces (16.1 partial legality, 16.2 affordance/threat API) are not throwaway and are built regardless. |
+| **C7** | 2026-07-28 | **Option E** — capture-conditional king cooldown. A king that merely flees to an empty square stays exempt (the original "must always be able to move" guarantee, unchanged); a king whose own action captures an enemy — directly, or by firing a reservation as a recapturing defender — is cooled exactly like any other non-pawn piece, unless doing so would leave its colour with zero legal actions (safety valve). The maintainer's own framing: evasion followed by an opportunistic capture is still possible, but the attacker may by then be defended by a reservation, so taking it can expose the king to a recapture rather than costing nothing. Implemented as `RuleSet.king_capture_cooldown` (default `True`); pre-ruling behaviour kept as named variant `unconditional_king_immunity`. New fingerprint `24932504dccb…` (was `bf2bb9dab0f0…`). Closes Gate 17b. |
 
 ---
 
@@ -502,35 +507,50 @@ set branch protection to require them for merge.
 
 ---
 
-## Phase 17c — Publication package *(split out of Phase 17, 2026-07-28)*
+## Phase 19 — Publication package *(split out of Phase 17 as 17c, 2026-07-28;
+renumbered to 19, 2026-07-28)*
 
 **Goal.** Make the work citable. Split into its own phase at the maintainer's
 request — a separate effort from the engine/collaboration hygiene of Phase 17,
 run on the maintainer's own schedule rather than folded into an agent-driven
 gate.
 
+**Why 19, not 17c.** The original split (same day) argued for publishing
+*ahead of* the learning system, since the contribution — spec, proven-correct
+operator, executable invariant methodology — does not depend on it working.
+The maintainer has since decided against publishing a "final" rulebook before
+testing it with human players: rules that look complete on paper can still
+turn out to be missing or wrong once people actually play them, and that is
+cheaper to discover before an arXiv/Zenodo record exists than after. Renumbered
+past the learning track (`docs/LEARNING_ROADMAP_v2.md`, Phases 18a–18d) so the
+sequencing reads "learning work, human playtesting, *then* publish" — not a
+claim that publication depends on the learning system finishing, only that it
+now comes after both.
+
 **Deliverables.**
 - **Publication package**: arXiv (cs.GT) preprint built from
   `simultaneous_chess_spec_v1.md` + `INVARIANTS.md`, with the Zenodo DOI
   deposit covering the tagged engine release and the campaign report.
-  **Timing argument:** the contribution is the formal specification, the
-  proven-correct operator (order-independence M2, χ-symmetry M3,
-  well-definedness Lemmas 6.4a/6.4c/13.4), and the executable
-  invariant methodology — none of which depends on the learning system
-  working. Publishing now also timestamps the design ahead of the
-  collaboration. Do not wait for Phase 18.
+  The formal specification, the proven-correct operator (order-independence
+  M2, χ-symmetry M3, well-definedness Lemmas 6.4a/6.4c/13.4), and the
+  executable invariant methodology remain the contribution regardless of
+  timing; what changed is *when* to timestamp it, not *what* is publishable.
 - Community distribution (chessvariants.com, BoardGameGeek) stays deferred
   until a playable client exists, per the existing decision.
 
-**DoD.** Preprint compiles and the Zenodo deposit resolves; the tagged
-release's `RuleSet.fingerprint()` is recorded in the deposit metadata.
+**DoD.** Human playtesting has run and any rules issues it surfaces have been
+resolved (spec/invariants updated, not silently patched — same discipline as
+every other ruling in this document); preprint compiles and the Zenodo
+deposit resolves; the tagged release's `RuleSet.fingerprint()` is recorded in
+the deposit metadata.
 
-> #### ⛔ COMMIT GATE 17c
+> #### ⛔ COMMIT GATE 19
 > **Suggested message:** `docs: arXiv preprint + Zenodo deposit for the tagged v1.1 release`
 > **STOP.**
 
-**Status: deferred to the maintainer, to run as a separate effort.** Not
-started; no agent work expected here unless explicitly requested.
+**Status: deferred to the maintainer, to run as a separate effort, after human
+playtesting.** Not started; no agent work expected here unless explicitly
+requested.
 
 ---
 
@@ -558,9 +578,13 @@ date; Phase 11b's estimands did not target it.
 
 **Scope discipline.** Per prime directive 2 (`DEVELOPMENT.md` §0):
 `[OPEN]`/convention items become ruled defaults, never a silent code change —
-**no rule change lands in this sub-phase.** 17b is measurement and a ruling
-request only; any resulting `RuleSet` field is a Phase 17c (or later)
-implementation, gated on the ruling below.
+originally scoped as measurement and a ruling request only, with any
+resulting `RuleSet` field deferred to a follow-up sub-phase gated on the
+ruling. In the event, the maintainer asked for the implementation to follow
+the ruling immediately rather than waiting for a separate phase — see the
+Ruling and DoD below for what actually landed and why that is not a scope
+violation (the ruling gates the change either way; only *when* it lands
+moved).
 
 **Deliverables.**
 1. **A targeted estimand**, extending the Phase 11b campaign methodology: over
@@ -599,14 +623,45 @@ implementation, gated on the ruling below.
      specifically to avoid reintroducing classical stalemate/lockup
      pathologies (§7), so this option carries that risk and would need its own
      analysis, not just a flag flip.
+   - **Option E — capture-conditional king cooldown** (proposed 2026-07-27,
+     alongside C7a–d, once the exploit's shape was clearer: it is
+     specifically the king's *capture*, not its mobility, that is free).
+     Narrows the exemption to non-capturing moves only: a king that flees to
+     an empty square stays exempt (the "must always be able to move"
+     guarantee is untouched); a king whose own action captures an enemy —
+     directly, or by firing a reservation as a recapturing defender — is
+     cooled exactly like any other non-pawn piece, unless doing so would
+     leave its colour with zero legal actions (a lone king, or a king whose
+     only other piece is stuck or already cooled). Closer-scoped than C7c/C7d:
+     it targets the exact mechanism the playtest surfaced (a free capture
+     following a free evasion) without touching mobility or introducing a
+     wholly new rule family.
 
-**DoD.** Report committed; ruling recorded (status: open until the maintainer
-decides); **no code/spec/invariants change** — that is explicitly out of scope
-for 17b and belongs to whichever follow-up sub-phase the ruling opens.
+**Ruling (C7, 2026-07-28): Option E, adopted.** The maintainer's own framing:
+evasion followed by an opportunistic capture is still possible under Option E
+— a king may still dodge a piece and later take it — but the attacker may by
+then be defended by a reservation, so taking it can fire a recapture and
+expose the king, rather than costing nothing as under the pre-ruling
+unconditional exemption. Implemented as `RuleSet.king_capture_cooldown`
+(default `True`, new fingerprint `24932504dccb…`, was `bf2bb9dab0f0…`);
+pre-ruling behaviour kept as named variant `unconditional_king_immunity`
+(§7, §13 of the spec; §8 of `INVARIANTS.md`). The originally-scoped plan
+deferred implementation to a follow-up sub-phase once ruled — the maintainer
+instead asked for it inline, so the spec/invariants/engine/test updates
+landed as part of closing this gate rather than in a separate phase.
+
+**DoD.** Report committed; ruling recorded; spec (§1.2, §2, §6.6, §6.7, §7,
+§13, changelog) and `INVARIANTS.md` (WF3, R13, §8) updated; `RuleSet` field
+added and fingerprinted; engine (`core/legality.py`, `core/stages/closure.py`,
+`core/phi.py`) and invariant checks (`invariants/checks.py`,
+`invariants/resolution_checks.py`) implement and independently verify the
+ruling; tests updated/added; `reports/campaign_v1.md` regenerated. **Closed.**
 
 > #### ⛔ COMMIT GATE 17b
-> **Suggested message:** `docs(roadmap): scope the king-cooldown-exemption exploit for measurement and ruling`
-> **STOP — measurement and ruling only; no rule change until the maintainer decides.**
+> **Suggested message:** `feat(rules): capture-conditional king cooldown (ruling C7/Option E, closes 17b)`
+> **STOP.**
+
+**Status (2026-07-28): ruled and closed.**
 
 ---
 
@@ -621,8 +676,8 @@ for 17b and belongs to whichever follow-up sub-phase the ruling opens.
 | Replayable, citable game records | Gate 15d |
 | A window a non-technical player can use | Gate 16 |
 | Repository safe for a second contributor | Gate 17 |
-| King-cooldown-exemption exploit measured; ruling requested | Gate 17b |
-| Work citable (arXiv + Zenodo) | Gate 17c |
+| King-cooldown-exemption exploit measured, ruled (Option E), and implemented | Gate 17b |
+| Work citable (arXiv + Zenodo), after human playtesting | Gate 19 |
 
 ## Recommended sequencing
 
