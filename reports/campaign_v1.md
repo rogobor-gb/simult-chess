@@ -1,6 +1,6 @@
 # Campaign v1 — Phase 11b pre-registered empirical report
 
-Generated 2026-07-23T23:19:51.084814+00:00. 45000 games total. Estimands, statistics, and sample sizes were declared before any run (`docs/DEVELOPMENT_addendum_v1.1.md` §11b); every table below is traceable to the run-spec constants in `harness/campaign.py` (agent pair, `RuleSet` diff from baseline, seed range).
+Generated 2026-07-28T21:38:49.745872+00:00. 45000 games total. Estimands, statistics, and sample sizes were declared before any run (`docs/DEVELOPMENT_addendum_v1.1.md` §11b); every table below is traceable to the run-spec constants in `harness/campaign.py` (agent pair, `RuleSet` diff from baseline, seed range).
 
 > **Interpretive caveat.** All balance statistics here are functionals of the state distributions induced by *these agents*, not of equilibrium play. The freeze this report supports is therefore provisional by construction (ruling A5) and is re-estimated after Phase 13 under learned agents.
 
@@ -16,22 +16,24 @@ Generated 2026-07-23T23:19:51.084814+00:00. 45000 games total. Estimands, statis
 | `cancellation_enabled` | `True` | `[FROZEN v1.1]` |
 | `horizon` | `50` | `[FROZEN v1.1]` |
 | `intermezzo_reading` | `'ii'` | `[FROZEN v1.1]` |
+| `king_capture_cooldown` | `True` | `[FROZEN v1.1]` |
 | `n_actions` | `2` | `[FROZEN v1.1]` |
 | `pawn_same_square_fizzle_scope` | `'both_pawns'` | `[FROZEN v1.1]` |
 | `recapture_cooldown` | `True` | `[FROZEN v1.1]` |
 
-**Fingerprint.** `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c` — hex SHA-256 of the canonical form (domain prefix, then one `field=repr(value)` line per rule-bearing field in name order); `RuleSet().fingerprint()`, `rules/ruleset.py`.
+**Fingerprint.** `24932504dccb26f49cdf2adb2f9aa1e33df8fdcbf56733ac48e7950f1b5b53e2` — hex SHA-256 of the canonical form (domain prefix, then one `field=repr(value)` line per rule-bearing field in name order); `RuleSet().fingerprint()`, `rules/ruleset.py`.
 
 **Declined arm values remain playable** as named variants (`rules/variants.py`), so no alternative requires a fork:
 
 | variant | fingerprint | `RuleSet` diff from frozen |
 |---|---|---|
-| `irrevocable_defense` | `945dfb4268ee` | `cancellation_enabled=False` |
-| `attacker_sequenced_intermezzo` | `d51e5ee58dae` | `intermezzo_reading=i` |
-| `any_same_square_fizzle` | `17cbd1dc6bd9` | `pawn_same_square_fizzle_scope=any_same_square` |
-| `no_recapture_cooldown` | `c987fe6f6710` | `recapture_cooldown=False` |
-| `horizon_30` | `551f9c5d770e` | `horizon=30` |
-| `horizon_80` | `eeb83fc4c540` | `horizon=80` |
+| `irrevocable_defense` | `41c5d97900f3` | `cancellation_enabled=False` |
+| `attacker_sequenced_intermezzo` | `5eb7deabc523` | `intermezzo_reading=i` |
+| `any_same_square_fizzle` | `c2a2b2dce902` | `pawn_same_square_fizzle_scope=any_same_square` |
+| `no_recapture_cooldown` | `17a62cef8239` | `recapture_cooldown=False` |
+| `horizon_30` | `fbe8d224d261` | `horizon=30` |
+| `horizon_80` | `248ee7372640` | `horizon=80` |
+| `unconditional_king_immunity` | `ec7393785393` | `king_capture_cooldown=False` |
 
 ## 1–2. Tournament matrix: draw rate & phase-count distribution
 

@@ -103,7 +103,7 @@ on a program by relabelling every actor/trajectory under $\mu$ and color inversi
 |---|---|---|---|---|
 | WF1 | Occupancy injectivity | S1 | STATE | |
 | WF2 | Type/color domain, type-constancy | S1 | STATE | |
-| WF3 | Cooldown membership | S1 | STATE | |
+| WF3 | Cooldown membership | S1 | STATE | K |
 | WF4 | King count | S1 | STATE | |
 | WF5 | Reservation list well-order | S1 | STATE | |
 | WF6 | Reservation referential integrity | S1 | STATE | |
@@ -157,9 +157,18 @@ Between $s$ and $s'$, $\mathrm{col}$ is immutable and $\mathrm{typ}(p)$ changes 
 if $p$ promoted this phase (§6.5); no other type mutation occurs.
 *Ref.* §1.1, §6.5. *Check.* diff $s\to s'$ on `typ`; every change must be a recorded promotion.
 
-**WF3 — Cooldown membership.** *(S1)*
-$C\subseteq\mathcal P^{\text{live}}$ and $C\cap(\{p:\mathrm{typ}(p)=\mathsf p\}\cup\{p:\mathrm{typ}(p)=\mathsf k\})=\varnothing$.
-*Ref.* §1.2, §7. *Check.* set membership + type filter.
+**WF3 — Cooldown membership.** *(S1, [K])*
+$C\subseteq\mathcal P^{\text{live}}$ and $C\cap\{p:\mathrm{typ}(p)=\mathsf p\}=\varnothing$
+always. Under `king_capture_cooldown=False` (variant `unconditional_king_immunity`),
+additionally $C\cap\{p:\mathrm{typ}(p)=\mathsf k\}=\varnothing$ — the pre-17b absolute
+statement. Under the v1.1 default `king_capture_cooldown=True` a king *may* be a member
+of $C$ (§7); the STATE-level check is necessarily cheaper than R13's full TRACE-level
+justification (it cannot see *why* a king is cooled), so it asserts only the coarse
+necessary condition: no colour may have **every** live token cooled (zero legal
+actions), king included.
+*Ref.* §1.2, §7. *Check.* pawn-exclusion always; king-exclusion iff
+`not ruleset.king_capture_cooldown`; else, per colour, at least one live token is
+uncooled.
 
 **WF4 — King count.** *(S1)*
 In every **non-terminal** reachable state, $|\{p:\mathrm{typ}(p)=\mathsf k,\ \mathrm{col}(p)=\omega\}|=1$
@@ -336,14 +345,26 @@ token. *Ref.* Lemma 6.4c. *Check.* bound the cascade loop by $|\mathcal P^{\text
 assert strict monotone descent; any overrun is an S0 non-termination bug.
 
 **R13 — Cooldown update.** *(S2, [K])*
-$C' = \{\text{tokens that displaced this phase}\}\setminus(\text{pawns}\cup\text{kings})$,
-**including** recapturers and promoted pieces. *Composition invariant (§7 near-theorem):*
-a token holding a valid reservation has not displaced ⇒ is never in $C'$ ⇒ is always
-fire-eligible; conversely a token in $C$ can never fire (it displaced ⇒ left origin ⇒
-invalid). *Ref.* §6.7, §7. *Check.* recompute $C'$ from the displacement set; assert the
+$C' = \{\text{tokens that displaced this phase}\}\setminus(\text{pawns}\cup K_{\text{exempt}})$,
+**including** recapturers and promoted pieces, where $K_{\text{exempt}}$ is every king
+under `king_capture_cooldown=False`, or (v1.1 default, `True`) exactly the kings whose
+displacement this phase was *not* a capture — directly, or by firing a reservation as a
+recapturing defender (ruling 17b, §7). A king excluded from $K_{\text{exempt}}$ (i.e. a
+capturing king, a *candidate*) is nonetheless **not** placed in $C'$ if doing so would
+leave its colour with zero legal actions next phase — no legal Move, Castle, Reserve, or
+Cancel for any surviving token of that colour (§7's safety valve); this is a full
+existence check over $C'$-post, ruleset, and reservations/castling-rights as finalized
+this closure, not merely "some token is uncooled." *Composition invariant (§7
+near-theorem):* a token holding a valid reservation has not displaced ⇒ is never in $C'$
+⇒ is always fire-eligible; conversely a token in $C$ can never fire (it displaced ⇒ left
+origin ⇒ invalid). *Ref.* §6.7, §7. *Check.* recompute $C'$ from the displacement set
+and king-capture-candidate set; for every candidate king, independently re-derive
+whether cooling it would strand its colour (existence check over the *post* state, not
+the production engine's own relaxation logic) and assert the outcome matches; assert the
 composition (no token is simultaneously in $C'$ and a fired defender).
 **[K]** whether a **recapture** contributes to $C'$ = `RuleSet.recapture_cooldown`
-(v1: `on`).
+(v1: `on`); whether a **capturing king** contributes to $C'$ =
+`RuleSet.king_capture_cooldown` (v1.1 default: `on`, ruling 17b).
 
 **R14 — Promotion.** *(S2)*
 A pawn reaching the last rank becomes the declaration-time chosen type and enters $C'$
@@ -493,14 +514,14 @@ parameter, never a literal.
 | `pawn_same_square_fizzle_scope` | `both_pawns` | `[FROZEN v1.1]` | R2 | Mixed convergence becomes (V)-annihilation vs. fizzle. | `any_same_square_fizzle` |
 | `annihilation_reading` | `B` (priority pairing) | `[FROZEN v1.1]` | R4 | Alt: timed one-tick model (§13.2). | — (unimplemented) |
 | `intermezzo_reading` | `(ii)` (unconditional) | `[FROZEN v1.1]` | R7, M4 | Alt: `(i)` attacker-sequenced (§13.4) — flips M4 from *true* to *deliberately order-dependent*. | `attacker_sequenced_intermezzo` |
+| `king_capture_cooldown` | `on` | `[Phase 17b]` (post-Gate-14) | WF3, R13 | If `off`: a king is exempt from $C'$ unconditionally, capturing or not — restores the pre-17b behaviour. | `unconditional_king_immunity` |
 
 **Frozen 2026-07-24 (Gate 14, maintainer rulings C1–C3; spec §13 and changelog).** The
-whole row set above is identified by one fingerprint,
-
-> `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c`
-
-— hex SHA-256 over the rule-bearing fields in canonical (name-sorted) order,
-`RuleSet.fingerprint()`. **The fingerprint is this table's executable form.** Since the
+whole row set above **excluding `king_capture_cooldown`** was identified by one
+fingerprint, `bf2bb9dab0f0…` (superseded by the Phase 17b paragraph below, which states
+the current value in full) — hex SHA-256 over the rule-bearing fields in canonical
+(name-sorted) order, `RuleSet.fingerprint()`. **The fingerprint is this table's
+executable form.** Since the
 harness reads the `RuleSet` and never a literal, a variant run stays checkable; since
 game records carry the fingerprint, a *change* to any row above is detectable rather
 than silent — a record made under other rules refuses to replay instead of quietly
@@ -508,6 +529,18 @@ replaying differently. The freeze is **provisional** (C3, extending A5): it fixe
 versioned default, and asserts nothing about equilibrium balance. Every declined value
 is registered in `rules/variants.py` (last column) and reachable via `--variant`, so
 exercising an alternative is still a one-line change, not a fork.
+
+**Phase 17b (2026-07-28, post-Gate-14 addition).** `king_capture_cooldown` is a new
+rule-bearing field, added after Gate 14 closed — not a re-opening of the frozen set,
+but an extension of it (spec changelog). Its default (`on`) moves the fingerprint of
+the *full* current field set to
+
+> `24932504dccb26f49cdf2adb2f9aa1e33df8fdcbf56733ac48e7950f1b5b53e2`
+
+— the mechanism (a new field moves the fingerprint) is exactly what Gate 14 was built
+to make visible: a rules change is *detectable*, never silent, whether it happens
+before or after a freeze. `RuleSet()` defaults now report this value;
+`bf2bb9dab0f0…` remains valid only as the Gate-14-era historical reference above.
 
 **Earlier resolution, retained for the record (2026-07-14):** `cancellation_enabled`
 (spec §9, retained — A1) and `pawn_same_square_fizzle_scope` (spec §13, `both_pawns`

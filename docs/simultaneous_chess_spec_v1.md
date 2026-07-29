@@ -26,11 +26,9 @@ see `docs/DEVELOPMENT_addendum_v1.1.md` §A):
 C1–C3 (`docs/DEVELOPMENT_roadmap_v2.md` §B) close Gate 11b. Every `RuleSet` field is
 **frozen at its Phase 11b campaign baseline** — the freeze is a no-op on values and
 changes only their status, from **[C]** to **[FROZEN v1.1]** (§13). The frozen defaults
-carry the fingerprint
-
-> `bf2bb9dab0f020b107e5cfb3d964f825f08fbcdb1a1c8c729776670f30d1491c`
-
-(hex SHA-256 of the canonical form; `RuleSet.fingerprint()`, `rules/ruleset.py`), which
+carried the fingerprint `bf2bb9dab0f0…` (hex SHA-256 of the canonical form;
+`RuleSet.fingerprint()`, `rules/ruleset.py`; superseded by Phase 17b below — the
+current value is stated there in full), which
 game records, the network handshake, and the release deposit all bind to. The freeze is
 **provisional** (C3, extending A5): it asserts a *versioned default*, not equilibrium
 balance — every campaign statistic is a functional of the state distribution induced by
@@ -46,6 +44,29 @@ well-definedness lemma and a re-derived worked example) of the attacker-sequence
 intermezzo, Reading (i) — previously a one-line deferred-lever mention only.
 `RuleSet.intermezzo_reading = "i"` is now an implemented, registered Stage B
 variant; inv M4 branches accordingly (INVARIANTS.md).
+
+**Phase 17b — king cooldown, capture-conditional (2026-07-28).** Maintainer ruling
+(playtest of the Phase 16 window surfaced "double movement power": under the
+unconditional king exemption, a king evades an attack for free, then captures the
+now-cooled attacker with equal impunity — two free actions from one piece in two
+phases). §1.2/§6.7/§7/§13 revised: the king's cooldown exemption now covers only
+*non-capturing* moves — a king that flees to an empty square stays exempt (spec's
+"must always be able to move" guarantee, unchanged), but a king whose own action
+captures an enemy (directly, or by firing a reservation as a recapturing defender)
+is cooled exactly like any other non-pawn piece, with one safety valve: a king is
+never cooled if doing so would leave its colour with zero legal actions (a lone
+king is the simplest instance; the same guarantee also covers a king whose only
+other piece is geometrically stuck or already cooled from an earlier displacement).
+New field `RuleSet.king_capture_cooldown: bool = True` (post-freeze addition,
+Gate 14 already closed — the fingerprint moves accordingly, made *detectable*
+rather than silent, per Phase 14's own stated purpose). Pre-17b behaviour survives
+as the named variant `unconditional_king_immunity`
+(`king_capture_cooldown=False`). New fingerprint:
+
+> `24932504dccb26f49cdf2adb2f9aa1e33df8fdcbf56733ac48e7950f1b5b53e2`
+
+(previous, Phase-14 frozen-default fingerprint: `bf2bb9dab0f0…`, truncated here —
+full value above in the Phase 14 entry.)
 
 ---
 
@@ -78,7 +99,7 @@ $$
 where:
 
 - **Occupancy** $\beta:\mathcal P^{\text{live}}\hookrightarrow\mathcal S$ is an injective partial map from the live tokens $\mathcal P^{\text{live}}\subseteq\mathcal P$ to squares; $\beta^{-1}:\mathcal S\rightharpoonup\mathcal P^{\text{live}}$ is its partial inverse (the occupant of a square, if any). A square is *empty* if $\beta^{-1}$ is undefined there.
-- **Cooldown set** $C\subseteq\mathcal P^{\text{live}}$: tokens that *displaced* in the immediately preceding resolution phase and are consequently inert this phase (§7). By construction $C$ contains no pawn or king token.
+- **Cooldown set** $C\subseteq\mathcal P^{\text{live}}$: tokens that *displaced* in the immediately preceding resolution phase and are consequently inert this phase (§7). By construction $C$ contains no pawn token, and — under the v1.1 default `king_capture_cooldown=True` (Phase 17b, §7) — no king that displaced *without capturing*; a king whose own action captured an enemy that phase is a member of $C$ like any other non-pawn token, subject to the safety valve of §7.
 - **Reservations** $R_\omega$: a finite, **age-ordered** list of *active reservations* held by player $\omega$ (§4.3).
 - **Bookkeeping** $\eta=(\text{castling rights},\;\text{repetition ledger},\;\text{no-progress counter},\;\text{phase index})$. (En passant is dropped in v1; see §6.5.)
 
@@ -101,7 +122,7 @@ The exclusion of the origin from $\sigma(\tau)$ is not cosmetic: it is what make
 
 ## 2. The game in one paragraph (informal)
 
-Each phase, both players simultaneously submit a program of $1$ to $N$ actions ($N=2$ in v1). An action is a **standard move/capture** (displace a piece by chess geometry) or a **reservation** ("defender $D$ shall recapture on protégé $Q$'s square if $Q$ is captured"), optionally a **castling** or **cancellation**. Programs are revealed and resolved by $\Phi$: pawn captures onto vacated squares *fizzle*; opposing moves whose paths meet *annihilate* (both removed); surviving movers arrive and capture stationary enemies; captures of defended pieces trigger **immediate recaptures that pre-empt** any same-phase capture of the recapturing defender (the *intermezzo*), possibly cascading. A displaced non-pawn, non-king piece is **inert next phase** (cooldown). A player whose king is removed loses; both kings removed in one phase is a draw.
+Each phase, both players simultaneously submit a program of $1$ to $N$ actions ($N=2$ in v1). An action is a **standard move/capture** (displace a piece by chess geometry) or a **reservation** ("defender $D$ shall recapture on protégé $Q$'s square if $Q$ is captured"), optionally a **castling** or **cancellation**. Programs are revealed and resolved by $\Phi$: pawn captures onto vacated squares *fizzle*; opposing moves whose paths meet *annihilate* (both removed); surviving movers arrive and capture stationary enemies; captures of defended pieces trigger **immediate recaptures that pre-empt** any same-phase capture of the recapturing defender (the *intermezzo*), possibly cascading. A displaced non-pawn piece is **inert next phase** (cooldown) — including a king, but only if its displacement was itself a capture (§7); a king that merely flees stays exempt. A player whose king is removed loses; both kings removed in one phase is a draw.
 
 ---
 
@@ -255,11 +276,11 @@ Surviving, non-recaptured movers occupy their destinations. **Promotion** resolv
 
 ### 6.6 Castling
 
-$\mathrm{Castle}$ is a single action (one slot) contributing two synchronized sub-trajectories (king two squares, rook to the king's far side), each assessed independently under (V)/(E). A hit on the king component ends the game; a hit on the rook component kills the rook while the king completes. The king is never cooled; the **rook is cooled**. Classical "cannot castle through check" is *vacuous* here (no check exists), so castling legality reduces to the geometric/history conditions in $\eta$ (king and rook unmoved, squares between empty on $\beta$). **[C, v1.1]** Since both king and rook displace as part of this one action, both are its *actors* (§4.1) for the purposes of L3 — a program cannot castle and also separately move the same flank rook.
+$\mathrm{Castle}$ is a single action (one slot) contributing two synchronized sub-trajectories (king two squares, rook to the king's far side), each assessed independently under (V)/(E). A hit on the king component ends the game; a hit on the rook component kills the rook while the king completes. The king is never cooled by castling — castling never captures, so the capture-conditional exemption of §7 is vacuous here regardless of `king_capture_cooldown` — but the **rook is cooled**. Classical "cannot castle through check" is *vacuous* here (no check exists), so castling legality reduces to the geometric/history conditions in $\eta$ (king and rook unmoved, squares between empty on $\beta$). **[C, v1.1]** Since both king and rook displace as part of this one action, both are its *actors* (§4.1) for the purposes of L3 — a program cannot castle and also separately move the same flank rook.
 
 ### 6.7 Stage D — phase closure
 
-- **Cooldown update.** $C' = \{\text{tokens that displaced this phase}\}\setminus(\text{pawns}\cup\text{kings})$, including recapturers (they displaced) and promoted pieces. All others thaw.
+- **Cooldown update.** $C' = \{\text{tokens that displaced this phase}\}\setminus(\text{pawns}\cup K_{\text{exempt}})$, including recapturers (they displaced) and promoted pieces. All others thaw. $K_{\text{exempt}}$ is, under `king_capture_cooldown=True` (v1.1 default, §7), the set of kings that displaced *without capturing*; under the `unconditional_king_immunity` variant it is every king. A king excluded from $K_{\text{exempt}}$ still escapes $C'$ if membership would leave its colour with zero legal actions next phase (§7's safety valve).
 - **Reservation update.** A reservation $(D,Q,\cdot)$ is invalidated (removed from $R_\omega$) iff $D$ is dead or off $\beta(D)$, or $Q$ is dead or off $\beta(Q)$ (the protégé displaced), or it fired this phase. Cancellations (§9) apply here. Surviving reservations persist with unchanged age.
 - **Bookkeeping.** Update castling rights, repetition ledger (on the public position, §10), no-progress counter (reset on any capture or pawn displacement; else $+1$), phase index.
 - **Event log** (perfect-info: the full delta). Emitted per Ch. 11's observation function in the hidden variant.
@@ -268,7 +289,13 @@ $\mathrm{Castle}$ is a single action (one slot) contributing two synchronized su
 
 ## 7. Cooldown — total inertia
 
-A token is in $C$ iff it *displaced* in the previous phase and is not a pawn or king. While cooled it is **fully inert**: it cannot move, castle, declare a reservation, or fire a recapture. This is the deliberate classical-chess vulnerability window ("a sitting duck") that gives the game a sense of the ordinary take and kills the flashing/oscillation exploits (knight off-and-back, uncapturable rooks, infinite finales). Pawns (slow, forward-only) and kings (must always be able to move) are exempt.
+A token is in $C$ iff it *displaced* in the previous phase and is not a pawn, and — for a king — its displacement was not itself a capture. While cooled it is **fully inert**: it cannot move, castle, declare a reservation, or fire a recapture. This is the deliberate classical-chess vulnerability window ("a sitting duck") that gives the game a sense of the ordinary take and kills the flashing/oscillation exploits (knight off-and-back, uncapturable rooks, infinite finales). Pawns (slow, forward-only) are unconditionally exempt.
+
+**Kings, `king_capture_cooldown` (v1.1 default `True`, ruling 17b, 2026-07-28).** A king that merely *flees* — displaces to an empty square — is always exempt, preserving the original "must always be able to move" guarantee. A king whose own action *captures* an enemy token — directly, or by firing a reservation as a recapturing defender — is cooled exactly like any other non-pawn piece. This closes the "double movement power" exploit: under the pre-17b unconditional exemption, a king could evade an attack for free one phase, then capture the now-cooled attacker with equal impunity the next — two free actions from one piece, at zero risk, in two phases. Under the ruling, the second half of that sequence now costs a phase of vulnerability, though the first half (evasion) is deliberately left free: it is still possible for a king to *opportunistically* dodge a piece and later capture it, but the attacker may by then be defended by a reservation, in which case taking it fires the recapture and the king is exposed to the recapturer's reservation partner, not merely to next-phase cooldown.
+
+*Safety valve.* A king is never actually placed in $C'$ if doing so would leave its colour with **zero legal actions** next phase — no legal Move, Castle, Reserve, or Cancel for any of its remaining live tokens. A lone king (its side's last piece) is the simplest instance, but the same guarantee equally covers a king whose only other piece is geometrically stuck (no legal move or capture) or already cooled from an earlier displacement: the check is "does this colour have any legal program at all," not merely "is the king literally alone." A king relaxed by this valve reverts, for that phase only, to the pre-17b behaviour — never a worse outcome than the engine guaranteed before this ruling existed.
+
+*Named variant.* The pre-17b unconditional exemption — a king is exempt from cooldown regardless of whether it captured — survives as `RuleSet` variant `unconditional_king_immunity` (`king_capture_cooldown=False`), per the declined-arms-stay-playable convention of Phase 14.
 
 *Internal consistency (near-theorem).* "A cooled piece cannot fire a recapture" is almost forced: cooling requires displacement, displacement vacates the origin, and a reservation is invalid once its defender leaves its square. Conversely, a defender holding a *valid* reservation has, by definition, not moved, hence is never cooled, hence is always eligible to fire — cooldown and defense compose cleanly. The design consequence flagged earlier holds: a defended piece *on cooldown cannot flee*, so its reservation is its only shield — friction and defense reinforce each other.
 
@@ -383,11 +410,14 @@ Multiple reservations are **core** to v1 (a loss of tempo traded for solidity). 
 ## 13. Parameters, conventions, and open items
 
 **Parameters — all [FROZEN v1.1] (Gate 14, rulings C1–C3 of 2026-07-24; see
-changelog).** "Frozen" means *versioned*, not *proven optimal*: the values are those the
-Phase 11b campaign ran under, and the freeze is provisional pending re-estimation under
-stronger agents. The whole set is identified by the fingerprint
-`bf2bb9dab0f0…` (`RuleSet.fingerprint()`); every declined value below remains playable
-as a named variant (`rules/variants.py`), so no alternative requires a fork.
+changelog), plus one post-freeze addition (Phase 17b, 2026-07-28).** "Frozen" means
+*versioned*, not *proven optimal*: the values are those the Phase 11b campaign ran
+under, and the freeze is provisional pending re-estimation under stronger agents. The
+whole set is identified by the fingerprint `24932504dccb…` (`RuleSet.fingerprint()`;
+the Gate-14-only set, before `king_capture_cooldown` existed, was `bf2bb9dab0f0…` —
+both values are recorded so the change is *detectable*, not silent); every declined
+value below remains playable as a named variant (`rules/variants.py`), so no
+alternative requires a fork.
 
 | Parameter | Frozen value | Status | Declined alternative (variant name) |
 |---|---|---|---|
@@ -398,6 +428,7 @@ as a named variant (`rules/variants.py`), so no alternative requires a fork.
 | Pawn same-square fizzle scope (§6.2/6.5) | **both pawns** | **[FROZEN v1.1]** (C1, was [C, confirmed] A2) | any same square (`any_same_square_fizzle`) — the largest measured effect (+0.140 draw rate), declined on mechanism: horizon-attributed draws rise 0.311 → 0.719 |
 | Annihilation reading (§6.3) | **B**, declaration-priority | **[FROZEN v1.1]** | timed one-tick (§13.2) — declined for v1, *unimplemented*, so deliberately not a named variant |
 | Intermezzo reading (§6.4) | **(ii)**, unconditional | **[FROZEN v1.1]** (C2) | (i) attacker-sequenced (`attacker_sequenced_intermezzo`, §13.4) — +0.027 draw rate, just past MDE, with no shift in draw causes |
+| King capture-cooldown (§7) | **on** | **[Phase 17b]** (2026-07-28, post-Gate-14, not campaigned) | off (`unconditional_king_immunity`) — the pre-17b behaviour, superseded on mechanism (playtest-observed "double movement power" exploit), not on campaign statistics |
 
 **Conventions, resolved (rulings of 2026-07-14; see changelog).**
 - **[C, retained]** Cancellation retained as the v1 default (§9); irrevocable defense
