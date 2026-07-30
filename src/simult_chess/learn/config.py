@@ -34,3 +34,7 @@ class SearchConfig:
     selection: str = "regret_matching"
     prior_weight: float = 1.0  # blends the network prior into the RM initializer
     temperature: float = 1.0  # early-game sampling temperature for self-play
+    epsilon_floor: float = 0.02  # v3 18a'.3: explicit per-action sampling-probability
+    # floor, turning "every action visited infinitely often" (SM-MCTS convergence
+    # theorem hypothesis H3) from an empirical observation into a guarantee --
+    # see learn.search._regret_matching_strategy's docstring.

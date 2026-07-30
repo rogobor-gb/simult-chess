@@ -130,6 +130,7 @@ class LearnedAgent:
             self.search_config.simulations,
             rng,
             prior_weight=self.search_config.prior_weight,
+            epsilon=self.search_config.epsilon_floor,
         )
         stats = root.white if color is Color.WHITE else root.black
         assert stats is not None, "search must expand the root before playing"

@@ -62,6 +62,7 @@ def restricted_support_policy(
         search_config.simulations,
         rng,
         prior_weight=search_config.prior_weight,
+        epsilon=search_config.epsilon_floor,
     )
     stats = root.white if color is Color.WHITE else root.black
     assert stats is not None and root.context is not None

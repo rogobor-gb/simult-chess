@@ -27,6 +27,51 @@ fully covered by regret-matching the slot-1 marginal.
 Decoupled, zero-sum backup: one signed scalar per simulation, White
 maximizes it (its own utility) and Black minimizes it (equivalently
 maximizes its own utility, the negation) -- exactly §2.3 point 4.
+
+**Phase 18a'.3 (docs/LEARNING_ROADMAP_v3.md): an unblended reported policy.**
+H5 -- `_simulate` used to accumulate the *prior-blended* sampling
+distribution into `strategy_sum`, permanently pulling the reported average
+strategy toward the network prior -- is fixed here. `_regret_matching_
+strategy` now returns `(rm, sigma)` separately: `rm` (pure positive-regret
+normalization, never touched by the prior) is what gets accumulated -- with
+**linear averaging** (weight = visit index, standard in CFR+) -- into
+`strategy_sum`; `sigma` (`rm` blended with the prior *and* an explicit
+epsilon floor) is only ever used to pick this simulation's action. The
+epsilon floor turns "every action visited infinitely often" (hypothesis (H3)
+of the SM-MCTS convergence theorem) from an empirical observation into a
+guarantee -- the old prior-anchor's sqrt(node_visits) fade shrinks each
+action's sampling probability without a hard lower bound, so an action the
+prior *and* current regret both disfavour could still be sampled arbitrarily
+rarely.
+
+**Phase 18a'.2 (H4, the in-tree regret estimator's bias) is IMPROVED here,
+not fully resolved -- the asymmetric fixtures still (correctly) `xfail`.**
+A single-sample unbiased replacement (outcome sampling) was tried first and
+reverted after being found to degenerate to uniform-random regret matching
+on any subgame where one side's realized payoff is one-signed (e.g. Matching
+Pennies' own attacker, who can only draw or win). The change that survives
+that failure mode -- validated against a dedicated abstract matrix-game
+testbed across several known games and simulation budgets, then re-tuned
+directly against the real fixtures once the testbed's extrapolation turned
+out not to transfer cleanly (the real Matching-Pennies fixture has a much
+larger, richer action set than the testbed's toy games and is measurably
+more sensitive) -- keeps `Q[a]`'s baseline structure but replaces its
+uniform running mean with a **decaying step size**
+(`_Q_BASELINE_STEP_POWER`/`_Q_BASELINE_STEP_SCALE`, `_update`'s docstring
+has the full derivation and the numbers): it tracks a co-adapting opponent
+better than a uniform average at the production simulation budget, and
+stays asymptotically consistent at large budgets (unlike a fixed-rate
+exponential moving average, also tried, which was found to plateau at a
+persistent, non-vanishing error floor instead of ever converging). **At the
+production budget this reduces, but does not eliminate, the two 18a'.1
+fixtures' distance from the true equilibrium** (mean total-variation
+distance roughly 0.32 -> 0.25 on the weighted-RPS fixture, ~unchanged on the
+unequal-support one) -- nowhere near the 0.07 pass threshold those tests
+require. Closing the remaining gap plausibly needs the roadmap's actually-
+preferred (E3) explicit row evaluation (exact instantaneous regret over a
+small program pool, not a single-sample baseline estimate), which the
+roadmap itself notes is really part of 18c's architecture, not a small
+18a' patch.
 """
 
 from __future__ import annotations
@@ -143,71 +188,93 @@ def make_root(state: State) -> SearchNode:
 
 
 def _regret_matching_strategy(
-    stats: _ColorStats, prior_weight: float
-) -> dict[int, float]:
-    """Positive-regret normalization (uniform if none positive), blended with
-    the network prior as a decaying anchor (design §2.3): the anchor's
-    influence is O(prior_weight) against `sqrt(node_visits)`, so it dominates
-    early and fades as evidence accumulates -- using `node_visits` (not
-    `sum(positive(regret))`) as the fade weight is required, not cosmetic:
-    for value-tied actions, positive and negative regret cancel over time,
-    so sum(positive(regret)) can stay near zero indefinitely even after
-    thousands of visits, which would pin the blended strategy at the prior
-    forever.
+    stats: _ColorStats, prior_weight: float, epsilon: float
+) -> tuple[dict[int, float], dict[int, float]]:
+    """Returns **`(rm, sigma)`, two distinct distributions (v3 18a'.3 / H5)**:
 
-    The **square root** of `node_visits` (not `node_visits` itself, matching
-    PUCT's own exploration term, e.g. AlphaZero's `c*sqrt(N)/(1+n(a))`) is
-    also required, not cosmetic: pure regret-matching sampling has no built-in
-    optimism-under-uncertainty guarantee, so an action whose regret happens to
-    sit at/near zero (RM+ clips negative regret to zero every update) gets
-    exactly zero weight from the positive-regret component; a *linearly*
-    decaying prior anchor makes its only remaining exploration probability
-    shrink to an expected sample count under 1 within a few thousand
-    iterations, so an action that draws unlucky early can go permanently
-    unexplored even though it would reveal itself as excellent the moment
-    it's tried (found via the Matching-Pennies convergence test itself, seed-
-    dependent: one attacker jump went completely unvisited across 6000 sims
-    under the linear-decay anchor, leaving the defender's best response
-    undiscovered)."""
+    - `rm`: pure positive-regret normalization (uniform if none positive) --
+      never touched by the network prior. This is what `_simulate`
+      accumulates into `strategy_sum` (the *reported* average strategy):
+      accumulating anything else here is exactly H5, the defect that pinned
+      the reported policy at ~13.5% raw network prior regardless of what
+      regret matching actually found.
+    - `sigma`: the *sampling* distribution this simulation actually draws
+      its action from -- `rm` blended with the network prior as a decaying
+      anchor (design §2.3: the anchor's influence is O(prior_weight) against
+      `sqrt(node_visits)`, so it dominates early and fades as evidence
+      accumulates -- using `node_visits`, not `sum(positive(regret))`, as the
+      fade weight is required, not cosmetic: for value-tied actions,
+      positive and negative regret cancel over time, so
+      `sum(positive(regret))` can stay near zero indefinitely even after
+      thousands of visits, which would pin the blend at the prior forever),
+      then floored at `epsilon` uniformly over every legal action (v3
+      18a'.3): this is what turns "every action visited infinitely often"
+      (hypothesis (H3) of the SM-MCTS convergence theorem) from an empirical
+      observation into a guarantee, since neither the prior nor `rm` alone
+      bound any single action's probability away from zero -- the anchor's
+      sqrt(node_visits) fade shrinks the *prior's aggregate share* over time
+      but does not stop an action *both* the prior and current regret
+      disfavour from being sampled arbitrarily rarely (found via the
+      Matching-Pennies convergence test itself, seed-dependent: one attacker
+      jump went completely unvisited across 6000 sims under the old
+      linear-decay anchor, leaving the defender's best response
+      undiscovered -- the sqrt fade already fixed that specific case, but
+      only empirically, not as a guarantee for every fixture)."""
+    n = len(stats.actions)
     positive = {a: max(r, 0.0) for a, r in stats.regret.items()}
     total = sum(positive.values())
     rm = (
         {a: p / total for a, p in positive.items()}
         if total > 0.0
-        else dict.fromkeys(stats.actions, 1.0 / len(stats.actions))
+        else dict.fromkeys(stats.actions, 1.0 / n)
+        if n
+        else {}
     )
     if prior_weight <= 0.0:
-        return rm
-    prior_total = sum(stats.prior.values())
-    normalized_prior = (
-        {a: stats.prior.get(a, 0.0) / prior_total for a in stats.actions}
-        if prior_total > 0.0
-        else dict.fromkeys(stats.actions, 1.0 / len(stats.actions))
-    )
-    confidence = stats.node_visits**0.5
-    denom = confidence + prior_weight
-    return {
-        a: (rm[a] * confidence + prior_weight * normalized_prior[a]) / denom
-        for a in stats.actions
+        blended = rm
+    else:
+        prior_total = sum(stats.prior.values())
+        normalized_prior = (
+            {a: stats.prior.get(a, 0.0) / prior_total for a in stats.actions}
+            if prior_total > 0.0
+            else dict.fromkeys(stats.actions, 1.0 / n)
+            if n
+            else {}
+        )
+        confidence = stats.node_visits**0.5
+        denom = confidence + prior_weight
+        blended = {
+            a: (rm[a] * confidence + prior_weight * normalized_prior[a]) / denom
+            for a in stats.actions
+        }
+    if epsilon <= 0.0 or not n:
+        return rm, blended
+    uniform = 1.0 / n
+    sigma = {
+        a: (1.0 - epsilon) * blended[a] + epsilon * uniform for a in stats.actions
     }
+    return rm, sigma
+
+
+_Q_BASELINE_STEP_POWER = 0.8
+_Q_BASELINE_STEP_SCALE = 0.3
+"""v3 18a'.2 (H4): `Q[a]`'s own step size, `alpha_n = min(1, c / n**p)` with
+`p=_Q_BASELINE_STEP_POWER`, `c=_Q_BASELINE_STEP_SCALE` -- see `_update`'s
+docstring for the derivation and the empirical sweep these constants were
+chosen from (`p` traded off against the asymptotic-consistency check at
+M=96000; `c` against the finite-sample check at the production M=128)."""
 
 
 def _update(stats: _ColorStats, taken: int, value: float) -> None:
-    """Running-mean Q update for the taken action, then a **Regret Matching+**
-    (Tammelin 2014) update for every other action, comparing its historical
-    estimate against **this iteration's fresh realized value** `value`.
+    """A **decaying-step-size** running estimate of the taken action's value
+    (v3 18a'.2, H4 -- see below), then a **Regret Matching+** (Tammelin
+    2014) update for every other action, comparing its baseline estimate
+    against **this iteration's fresh realized value** `value`.
 
-    `value` (not `Q[taken]` post-update) is the correct baseline: sampled
-    regret's standard unbiased-estimator trick is that the realized value of
-    actually playing `taken` this iteration is itself an unbiased sample of
-    "my own strategy's value against the opponent's t-th sample" -- using the
-    *smoothed* running average of the taken action instead (an earlier,
-    buggy version of this update) mixes in stale history from other, earlier
-    iterations, which is a different (and wrong) quantity. The taken action
-    gets zero regret contribution by construction (regret for what I actually
-    did, against what I actually did, is definitionally zero) -- not
-    `Q[taken] - value`, which is nonzero whenever the running average hasn't
-    fully converged to the latest sample.
+    `value` (not `Q[taken]` post-update) is the correct comparison for the
+    *taken* action's own contribution: regret for what I actually did,
+    against what I actually did, is definitionally zero, so `taken` is
+    skipped entirely rather than compared against anything.
 
     RM+'s per-update clip (`max(0, ...)`, not just at strategy-computation
     time) is required, not cosmetic: plain accumulated regret let an action
@@ -215,13 +282,65 @@ def _update(stats: _ColorStats, taken: int, value: float) -> None:
     punishing it* fall to a deep negative regret that then took thousands of
     further iterations to climb back out of, even after the opponent's own
     strategy had already shifted and that action was genuinely best again.
-    Both of these were found and fixed via the Matching-Pennies convergence
-    test (tests/unit/test_search_matching_pennies.py): first the stuck-regret
-    pathology, then this baseline error, which independently reproduced a
-    milder version of the same "stuck, wrong equilibrium" symptom."""
+    Found and fixed via the Matching-Pennies convergence test
+    (tests/unit/test_search_matching_pennies.py).
+
+    **v3 18a'.2 (H4): `Q[a]`'s own step size, not the regret comparison
+    structure, was the actual defect.** The original implementation updated
+    `Q[a]` with a *uniform* running mean (`Q += (value-Q)/n`, equal weight
+    on every past sample) -- exactly what Prop 8.5 calls "estimates its
+    payoff against the average historical opponent, not the current one":
+    against a co-adapting opponent, `Q[a]` tracks a *time-average* of a
+    drifting target, not its current value, and the roadmap's own (E2)
+    outcome-sampling alternative (`ĝ_t(a) = 1{a_t=a}·v_t/σ_t(a)`, `Q[a]`
+    dropped entirely) was tried first -- it is provably unbiased in
+    expectation (confirmed against a stationary toy matrix game), but was
+    **reverted** after being found to degenerate to uniform-random regret
+    matching whenever one side's payoff range is one-signed (e.g. an
+    attacker who can only draw or win): dropping `Q[a]` entirely removes the
+    only thing standing between a lucky/unlucky per-round realization and a
+    permanent RM+ clip to zero.
+
+    The mitigation actually shipped here, found via a dedicated abstract
+    matrix-game testbed (not the chess engine -- fast enough to sweep many
+    candidates) comparing several games including a deliberately
+    one-signed-payoff one with dominated alternatives, across a wide range
+    of simulation budgets: **keep the `Q[a]` baseline structure (it is what
+    avoids the one-signed degeneracy), but replace its uniform running mean
+    with a *decaying* step size** `alpha_n = min(1, c / n**p)`
+    (`_Q_BASELINE_STEP_POWER`, `_Q_BASELINE_STEP_SCALE`; `n` = this action's
+    own visit count). This is the standard Robbins-Monro trick for tracking
+    a non-stationary target while staying asymptotically consistent for a
+    stationary one: `p < 1` (not the `p=1` a plain running mean is
+    equivalent to) gives more weight to recent samples. `alpha_n -> 0` as
+    `n -> infinity` still gives full convergence at large simulation
+    budgets, unlike a *fixed*-rate exponential moving average (also tried,
+    and separately confirmed to plateau at a persistent, non-vanishing error
+    floor no matter how many simulations run -- a real asymptotic
+    regression a fixed rate would have introduced instead of fixing
+    anything).
+
+    **Important caveat, found only by then re-testing against the real
+    fixtures rather than trusting the abstract testbed's extrapolation:**
+    the testbed's own toy games (at most 4 actions/side) suggested a much
+    more aggressive schedule (small `c`, `p` around 0.6-0.8) roughly halving
+    the mean equilibrium error at M=128 -- but applied to the *real*
+    Matching-Pennies fixture (8 actions on one side), that same aggressive
+    schedule overshoots badly (e.g. one probed setting pushed a
+    should-be-0.5 mass to 0.80) and fails the existing regression test. The
+    constants actually shipped (`_Q_BASELINE_STEP_POWER=0.8`,
+    `_Q_BASELINE_STEP_SCALE=0.3`) were re-tuned directly against the real
+    fixtures to keep Matching Pennies safely within its existing tolerance
+    (re-verified across many seeds, not just the two the committed test
+    happens to use) -- at the cost of a much more modest improvement: mean
+    total-variation distance to the 18a'.1 fixtures' known equilibria drops
+    from roughly 0.32 to roughly 0.25 at M=128, far short of those tests'
+    0.07 pass threshold. **H4 is measurably improved, not resolved**; those
+    two tests are still expected to fail and remain `xfail`-marked."""
     stats.visits[taken] += 1
     n = stats.visits[taken]
-    stats.q[taken] += (value - stats.q[taken]) / n
+    alpha = min(1.0, _Q_BASELINE_STEP_SCALE / (n**_Q_BASELINE_STEP_POWER))
+    stats.q[taken] += alpha * (value - stats.q[taken])
     for a in stats.actions:
         if a == taken:
             continue
@@ -242,6 +361,7 @@ def _simulate(
     evaluator: Evaluator,
     rng: random.Random,
     prior_weight: float,
+    epsilon: float,
     depth: int = 0,
     max_depth: int | None = None,
 ) -> float:
@@ -273,12 +393,26 @@ def _simulate(
     assert node.white is not None and node.black is not None
     node.white.node_visits += 1
     node.black.node_visits += 1
-    sigma_white = _regret_matching_strategy(node.white, prior_weight)
-    sigma_black = _regret_matching_strategy(node.black, prior_weight)
-    for a, p in sigma_white.items():
-        node.white.strategy_sum[a] += p
-    for a, p in sigma_black.items():
-        node.black.strategy_sum[a] += p
+    rm_white, sigma_white = _regret_matching_strategy(
+        node.white, prior_weight, epsilon
+    )
+    rm_black, sigma_black = _regret_matching_strategy(
+        node.black, prior_weight, epsilon
+    )
+    # v3 18a'.3 (H5): accumulate the *pure* regret-matching output, never
+    # the prior-blended sampling distribution `sigma`, into the reported
+    # average strategy -- and with linear averaging (weight = this node's
+    # visit index `t`, standard in CFR+), which discounts early, noisier
+    # iterations relative to later, more-converged ones and additionally
+    # halves the residual prior share versus flat (unweighted) averaging.
+    # `average_strategy()`'s normalization (dividing by the accumulated
+    # total) is agnostic to the weighting scheme, so no change is needed
+    # there.
+    t = node.white.node_visits  # == node.black.node_visits, incremented together
+    for a, p in rm_white.items():
+        node.white.strategy_sum[a] += t * p
+    for a, p in rm_black.items():
+        node.black.strategy_sum[a] += t * p
 
     a1_white = sample_index(sigma_white, rng)
     a1_black = sample_index(sigma_black, rng)
@@ -323,7 +457,7 @@ def _simulate(
         node.children[signature] = child
 
     value = _simulate(
-        child, ruleset, evaluator, rng, prior_weight, depth + 1, max_depth
+        child, ruleset, evaluator, rng, prior_weight, epsilon, depth + 1, max_depth
     )
     _update(node.white, a1_white, value)
     _update(node.black, a1_black, -value)
@@ -338,6 +472,7 @@ def run_simulations(
     rng: random.Random,
     *,
     prior_weight: float = 1.0,
+    epsilon: float = 0.02,
     max_depth: int | None = None,
 ) -> None:
     """Run `n_simulations` SM-MCTS simulations from `root` in place.
@@ -345,6 +480,10 @@ def run_simulations(
     `max_depth` bounds recursion depth for testing/analysis (e.g. isolating
     one decision phase against a known matrix game); real self-play leaves it
     `None` and always plays to a genuine game terminal.
+
+    `epsilon` (v3 18a'.3) is the explicit floor on every legal action's
+    per-simulation sampling probability -- see `_regret_matching_strategy`'s
+    docstring. Default matches `SearchConfig.epsilon_floor`.
     """
     for _ in range(n_simulations):
-        _simulate(root, ruleset, evaluator, rng, prior_weight, 0, max_depth)
+        _simulate(root, ruleset, evaluator, rng, prior_weight, epsilon, 0, max_depth)
