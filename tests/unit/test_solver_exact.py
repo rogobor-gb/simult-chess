@@ -30,6 +30,7 @@ from simult_chess.core.types import (
     State,
     Token,
 )
+from simult_chess.invariants.harness import run_phase
 from simult_chess.rules.ruleset import RuleSet
 from simult_chess.solver.exact import IntractableGraphError, solve_exact
 
@@ -112,3 +113,21 @@ def test_depth_limited_leaves_are_flagged_not_silently_treated_as_exact() -> Non
     # were 0 this test wouldn't be exercising what it claims to.
     assert len(depth_limited) > 0
     assert len(genuine_terminal) > 0
+
+
+def test_every_root_program_pair_replays_clean_through_the_invariant_harness() -> None:
+    """v3 18b DoD: 'every solved position replays through the invariant
+    harness with zero violations at any severity.' Every root-level
+    (white, black) program pair `solve_exact` actually fed to `phi` while
+    building the graph -- not just the ones with equilibrium mass -- is
+    replayed through `invariants.harness.run_phase` in strict mode, which
+    raises on any WF/L/R/T violation."""
+    graph = solve_exact(_dodge_state(), RULESET, max_nodes=5000, max_depth=1)
+    root = graph.root
+    state = root.state
+    for program_white in root.white_programs:
+        for program_black in root.black_programs:
+            result = run_phase(
+                state, program_white, program_black, RULESET, mode="strict"
+            )
+            assert result.violations == ()
