@@ -280,6 +280,78 @@ def sample_index(distribution: dict[int, float], rng: random.Random) -> int:
     return rng.choices(keys, weights=weights, k=1)[0]
 
 
+_MIRROR_SLIDE_DIR: dict[int, int] = {0: 4, 1: 3, 2: 2, 3: 1, 4: 0, 5: 7, 6: 6, 7: 5}
+"""v3 18a'.5: `_SLIDE_DIRECTIONS[i]` under a rank-only sign flip (drank ->
+-drank, dfile unchanged -- exactly `core.collision.mirror_square`'s
+transform) lands on `_SLIDE_DIRECTIONS[_MIRROR_SLIDE_DIR[i]]`; distance is
+unaffected. A proper involution (self-inverse): N<->S (0<->4), NE<->SE
+(1<->3), E and W are fixed points (2, 6), NW<->SW (5<->7)."""
+
+_MIRROR_KNIGHT: dict[int, int] = {0: 3, 1: 2, 2: 1, 3: 0, 4: 7, 5: 6, 6: 5, 7: 4}
+"""v3 18a'.5: same rank-sign-flip, applied to `_KNIGHT_DELTAS`. Also a
+proper involution, no fixed points (a knight jump always has drank != 0)."""
+
+
+def _mirror_square_index(index: int) -> int:
+    """`square_index` under χ's μ (rank -> 7-rank, file fixed)."""
+    rank, file = divmod(index, _BOARD)
+    return (_BOARD - 1 - rank) * _BOARD + file
+
+
+def _mirror_move_type(move_type: int) -> int:
+    if move_type < _SLIDE_TYPES:
+        direction, distance = divmod(move_type, _MAX_DISTANCE)
+        return _MIRROR_SLIDE_DIR[direction] * _MAX_DISTANCE + distance
+    if move_type < _PROMO_BASE:
+        return _KNIGHT_BASE + _MIRROR_KNIGHT[move_type - _KNIGHT_BASE]
+    # Promotion sub-block is keyed on (dfile, promo_type), both invariant
+    # under a rank-only flip (dfile is a file difference; promo_type doesn't
+    # involve rank at all) -- a fixed point. Only the *origin square*
+    # component of the overall grid index (factored out below) moves.
+    return move_type
+
+
+def mirror_grid_index(index: int) -> int:
+    """v3 18a'.5 ("analogous symmetrisation of the two policy heads"): the
+    slot grid index under χ's geometric involution μ (rank -> 7-rank, file
+    fixed) -- a **pure function of the index alone**, independent of colour,
+    because `encode_action` never reads one (only token *squares*, resolved
+    via `state.board`). Used to build a fixed `SLOT_SIZE`-length permutation
+    once (`MIRROR_PERMUTATION`) so `net.py` can symmetrize logits over
+    `s`/`chi(s)` with a single `index_select`, no `State`/`Action` round
+    trip inside the network. `mirror_grid_index(mirror_grid_index(i)) == i`
+    for every `i` (validated in `test_action_grid_mirror.py` against
+    `core.collision.mirror_action`/`mirror_state`/`encode_action` directly,
+    not just algebraically)."""
+    if index < MOVE_BLOCK:
+        square, move_type = divmod(index, MOVE_TYPES)
+        return _mirror_square_index(square) * MOVE_TYPES + _mirror_move_type(move_type)
+    if index < RESERVE_OFFSET:
+        return index  # Castle: kingside/queenside is a file concept, fixed.
+    if index < CANCEL_OFFSET:
+        relative = index - RESERVE_OFFSET
+        defender, protege = divmod(relative, _SQUARES)
+        return (
+            RESERVE_OFFSET
+            + _mirror_square_index(defender) * _SQUARES
+            + _mirror_square_index(protege)
+        )
+    return CANCEL_OFFSET + _mirror_square_index(index - CANCEL_OFFSET)
+
+
+MIRROR_PERMUTATION: tuple[int, ...] = tuple(
+    mirror_grid_index(i) for i in range(SLOT_SIZE)
+)
+"""Precomputed `mirror_grid_index` over the whole grid, `NO_SECOND_INDEX`
+appended as its own fixed point (length `SLOT_SIZE + 1`, matching a
+slot-2 logit vector) -- `net.py` indexes this directly rather than calling
+`mirror_grid_index` per-entry at every forward pass."""
+MIRROR_PERMUTATION_WITH_NO_SECOND: tuple[int, ...] = (
+    *MIRROR_PERMUTATION,
+    NO_SECOND_INDEX,
+)
+
+
 def decode_program(
     first: Action, second_index: int, state: State, color: Color, ruleset: RuleSet
 ) -> Program:
