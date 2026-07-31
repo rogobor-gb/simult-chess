@@ -76,6 +76,7 @@ roadmap itself notes is really part of 18c's architecture, not a small
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -137,6 +138,16 @@ class _ColorStats:
     strategy_sum: dict[int, float] = field(default_factory=dict)
     q: dict[int, float] = field(default_factory=dict)
     visits: dict[int, int] = field(default_factory=dict)
+    last_regret_increment: dict[int, float] = field(default_factory=dict)
+    """v3 18a'.4: `g_{t-1}(a)`, last round's instantaneous (pre-clip) regret
+    increment per action -- 0.0 for whichever action was taken that round
+    (regret against yourself is definitionally zero), `Q[a] - value`
+    otherwise. Used as the one-step prediction `m_t = g_{t-1}` in
+    `_regret_matching_strategy`'s **optimistic** RM+ (predictive regret
+    matching, Syrgkanis et al. 2015): the *strategy* for round t is computed
+    from `regret + m_t`, not plain `regret`, while the true cumulative
+    `regret` this dataclass otherwise tracks is unaffected by the
+    prediction and updated the same way regardless."""
     node_visits: int = 0
     """Total simulations that have reached this node (not per-action) --
     used to fade the prior anchor (see `_regret_matching_strategy`). Grows
@@ -153,6 +164,7 @@ class _ColorStats:
             self.strategy_sum.setdefault(index, 0.0)
             self.q.setdefault(index, 0.0)
             self.visits.setdefault(index, 0)
+            self.last_regret_increment.setdefault(index, 0.0)
 
     def average_strategy(self) -> dict[int, float]:
         """:math:`\\bar\\sigma / \\sum\\bar\\sigma` -- the search-derived mixed
@@ -187,8 +199,59 @@ def make_root(state: State) -> SearchNode:
     return SearchNode(state=state, is_terminal=False)
 
 
+def _rm_plus_distribution(stats: _ColorStats) -> dict[int, float]:
+    """Optimistic RM+ (v3 18a'.4): normalizes `positive(regret +
+    last_regret_increment)`. See `_regret_matching_strategy`'s docstring."""
+    n = len(stats.actions)
+    predicted_regret = {
+        a: r + stats.last_regret_increment.get(a, 0.0) for a, r in stats.regret.items()
+    }
+    positive = {a: max(r, 0.0) for a, r in predicted_regret.items()}
+    total = sum(positive.values())
+    return (
+        {a: p / total for a, p in positive.items()}
+        if total > 0.0
+        else dict.fromkeys(stats.actions, 1.0 / n)
+        if n
+        else {}
+    )
+
+
+def _hedge_distribution(stats: _ColorStats, optimistic: bool) -> dict[int, float]:
+    """Hedge / optimistic Hedge (v3 18a'.4, "expose Hedge and optimistic
+    Hedge as configurable alternatives"): exponential weights over the
+    *unclipped* cumulative signal `_update` accumulates into `stats.regret`
+    when `selection != "regret_matching"` (see `_update`'s docstring --
+    Hedge has no RM+-style per-round clip, unlike regret matching). Uses
+    the standard regret-optimal adaptive learning rate
+    `eta_t = sqrt(2 ln|A| / t)` (t = this node's visit count) rather than a
+    hand-tuned temperature, matching the roadmap's own note that RM's
+    appeal ("no temperature to tune") is not actually a property Hedge
+    lacks when tuned this way. `optimistic=True` adds the same one-step
+    prediction `_rm_plus_distribution` uses. Properly comparing this
+    against (optimistic) RM+ on real fixtures is 18d.2's job (a dedicated,
+    paired comparison across selection rules); this is deliberately just a
+    working, validated alternative to select via `SearchConfig.selection`,
+    not a tuned-to-win replacement."""
+    n = len(stats.actions)
+    if n == 0:
+        return {}
+    eta = math.sqrt(2.0 * math.log(max(n, 2)) / max(1, stats.node_visits))
+    scores = {
+        a: eta * (r + (stats.last_regret_increment.get(a, 0.0) if optimistic else 0.0))
+        for a, r in stats.regret.items()
+    }
+    top = max(scores.values())  # numerical stability: exp(score - top)
+    exp_scores = {a: math.exp(s - top) for a, s in scores.items()}
+    total = sum(exp_scores.values())
+    return {a: e / total for a, e in exp_scores.items()}
+
+
 def _regret_matching_strategy(
-    stats: _ColorStats, prior_weight: float, epsilon: float
+    stats: _ColorStats,
+    prior_weight: float,
+    epsilon: float,
+    selection: str = "regret_matching",
 ) -> tuple[dict[int, float], dict[int, float]]:
     """Returns **`(rm, sigma)`, two distinct distributions (v3 18a'.3 / H5)**:
 
@@ -219,17 +282,31 @@ def _regret_matching_strategy(
       jump went completely unvisited across 6000 sims under the old
       linear-decay anchor, leaving the defender's best response
       undiscovered -- the sqrt fade already fixed that specific case, but
-      only empirically, not as a guarantee for every fixture)."""
+      only empirically, not as a guarantee for every fixture).
+
+    `rm` (when `selection="regret_matching"`, the default) is **optimistic
+    (predictive) RM+** (v3 18a'.4, Syrgkanis et al. 2015): normalizes
+    `positive(regret + last_regret_increment)`, not plain
+    `positive(regret)` -- `regret` alone is last round's *true* cumulative
+    (unaffected by any prediction), but *this* round's strategy uses last
+    round's instantaneous regret increment as a one-step prediction of what
+    this round's increment will look like. Against another optimistic
+    learner this tightens the per-node NashConv rate from `O(1/sqrt(M))` to
+    `O(log M / M)` (roughly 0.09 -> 0.04 at M=128) -- the cheapest available
+    strength improvement in the roadmap, and it changes nothing about
+    `_update`'s own bookkeeping beyond also recording
+    `last_regret_increment` alongside the existing `regret` update.
+
+    `selection="hedge"`/`"optimistic_hedge"` (v3 18a'.4's other
+    deliverable, "expose Hedge ... as configurable alternatives") instead
+    dispatch to `_hedge_distribution` -- see its docstring."""
     n = len(stats.actions)
-    positive = {a: max(r, 0.0) for a, r in stats.regret.items()}
-    total = sum(positive.values())
-    rm = (
-        {a: p / total for a, p in positive.items()}
-        if total > 0.0
-        else dict.fromkeys(stats.actions, 1.0 / n)
-        if n
-        else {}
-    )
+    if selection == "hedge":
+        rm = _hedge_distribution(stats, optimistic=False)
+    elif selection == "optimistic_hedge":
+        rm = _hedge_distribution(stats, optimistic=True)
+    else:
+        rm = _rm_plus_distribution(stats)
     if prior_weight <= 0.0:
         blended = rm
     else:
@@ -265,7 +342,9 @@ chosen from (`p` traded off against the asymptotic-consistency check at
 M=96000; `c` against the finite-sample check at the production M=128)."""
 
 
-def _update(stats: _ColorStats, taken: int, value: float) -> None:
+def _update(
+    stats: _ColorStats, taken: int, value: float, clip_at_zero: bool = True
+) -> None:
     """A **decaying-step-size** running estimate of the taken action's value
     (v3 18a'.2, H4 -- see below), then a **Regret Matching+** (Tammelin
     2014) update for every other action, comparing its baseline estimate
@@ -336,15 +415,22 @@ def _update(stats: _ColorStats, taken: int, value: float) -> None:
     total-variation distance to the 18a'.1 fixtures' known equilibria drops
     from roughly 0.32 to roughly 0.25 at M=128, far short of those tests'
     0.07 pass threshold. **H4 is measurably improved, not resolved**; those
-    two tests are still expected to fail and remain `xfail`-marked."""
+    two tests are still expected to fail and remain `xfail`-marked.
+
+    `clip_at_zero=False` (v3 18a'.4) accumulates the same instantaneous
+    signal `g` without RM+'s per-round clip, for `selection="hedge"`/
+    `"optimistic_hedge"` (`_hedge_distribution` exponentiates this
+    unclipped cumulative sum rather than positive-normalizing it, so it has
+    no use for a clip -- Hedge's own regret bound doesn't need one)."""
     stats.visits[taken] += 1
     n = stats.visits[taken]
     alpha = min(1.0, _Q_BASELINE_STEP_SCALE / (n**_Q_BASELINE_STEP_POWER))
     stats.q[taken] += alpha * (value - stats.q[taken])
     for a in stats.actions:
-        if a == taken:
-            continue
-        stats.regret[a] = max(0.0, stats.regret[a] + (stats.q[a] - value))
+        g = 0.0 if a == taken else (stats.q[a] - value)
+        updated = stats.regret[a] + g
+        stats.regret[a] = max(0.0, updated) if clip_at_zero else updated
+        stats.last_regret_increment[a] = g
 
 
 def _decode_program(
@@ -362,6 +448,7 @@ def _simulate(
     rng: random.Random,
     prior_weight: float,
     epsilon: float,
+    selection: str = "regret_matching",
     depth: int = 0,
     max_depth: int | None = None,
 ) -> float:
@@ -394,10 +481,10 @@ def _simulate(
     node.white.node_visits += 1
     node.black.node_visits += 1
     rm_white, sigma_white = _regret_matching_strategy(
-        node.white, prior_weight, epsilon
+        node.white, prior_weight, epsilon, selection
     )
     rm_black, sigma_black = _regret_matching_strategy(
-        node.black, prior_weight, epsilon
+        node.black, prior_weight, epsilon, selection
     )
     # v3 18a'.3 (H5): accumulate the *pure* regret-matching output, never
     # the prior-blended sampling distribution `sigma`, into the reported
@@ -457,10 +544,19 @@ def _simulate(
         node.children[signature] = child
 
     value = _simulate(
-        child, ruleset, evaluator, rng, prior_weight, epsilon, depth + 1, max_depth
+        child,
+        ruleset,
+        evaluator,
+        rng,
+        prior_weight,
+        epsilon,
+        selection,
+        depth + 1,
+        max_depth,
     )
-    _update(node.white, a1_white, value)
-    _update(node.black, a1_black, -value)
+    clip_at_zero = selection == "regret_matching"
+    _update(node.white, a1_white, value, clip_at_zero)
+    _update(node.black, a1_black, -value, clip_at_zero)
     return value
 
 
@@ -473,6 +569,7 @@ def run_simulations(
     *,
     prior_weight: float = 1.0,
     epsilon: float = 0.02,
+    selection: str = "regret_matching",
     max_depth: int | None = None,
 ) -> None:
     """Run `n_simulations` SM-MCTS simulations from `root` in place.
@@ -484,6 +581,21 @@ def run_simulations(
     `epsilon` (v3 18a'.3) is the explicit floor on every legal action's
     per-simulation sampling probability -- see `_regret_matching_strategy`'s
     docstring. Default matches `SearchConfig.epsilon_floor`.
+
+    `selection` (v3 18a'.4) chooses the in-tree update rule: `"regret_
+    matching"` (optimistic RM+, the default), `"hedge"`, or
+    `"optimistic_hedge"` -- see `_regret_matching_strategy`/
+    `_hedge_distribution`. Default matches `SearchConfig.selection`.
     """
     for _ in range(n_simulations):
-        _simulate(root, ruleset, evaluator, rng, prior_weight, epsilon, 0, max_depth)
+        _simulate(
+            root,
+            ruleset,
+            evaluator,
+            rng,
+            prior_weight,
+            epsilon,
+            selection,
+            0,
+            max_depth,
+        )

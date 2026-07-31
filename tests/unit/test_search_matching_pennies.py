@@ -456,9 +456,10 @@ def test_weighted_rps_ground_truth_matches_the_roadmap_matrix() -> None:
         "(18a'.3); H4 (in-tree regret estimator bias) is IMPROVED, not "
         "resolved (18a'.2, see search.py's module docstring for the full "
         "account of what was tried, including a reverted attempt that was "
-        "found to break Matching Pennies). At the LIGHT-profile production "
-        "simulation budget (M=128), mean TV distance is now ~0.24-0.27 "
-        "(down from ~0.32-0.39 pre-fix) vs this test's 0.07 tolerance -- "
+        "found to break Matching Pennies). Optimistic RM+ (18a'.4) adds a "
+        "further small improvement on top. At the LIGHT-profile production "
+        "simulation budget (M=128), mean TV distance is now ~0.23-0.24 "
+        "(down from ~0.32-0.39 pre-18a'.2) vs this test's 0.07 tolerance -- "
         "real progress, still failing. Remove this marker once H4 is fully "
         "resolved (roadmap's preferred (E3) explicit row evaluation, "
         "properly part of 18c, is the most likely path)."
@@ -469,7 +470,7 @@ def test_weighted_rps_average_strategy_converges_to_known_equilibrium() -> None:
     self-play simulation budget (`SearchConfig().simulations`, = 128 -- the
     number every real game actually spends per move), not an arbitrarily
     large one. **Empirically confirmed to still fail at this budget** even
-    after 18a'.2/18a'.3 (mean TV distance ~0.24-0.27, improved from
+    after 18a'.2/18a'.3/18a'.4 (mean TV distance ~0.23-0.24, improved from
     ~0.32-0.39 pre-fix but still far outside this test's tolerance): earlier
     diagnostic sweeps (pre-18a'.2) over M in {128, 256, 512, ..., 6000,
     24000, 96000} showed the average strategy's distance to `x*` shrinking
@@ -549,11 +550,11 @@ def test_unequal_support_ground_truth_via_exact_lp_solver() -> None:
     strict=True,
     reason=(
         "v3 H4/H5, same status as the RPS fixture above -- H5 fixed, H4 "
-        "improved but not resolved (see search.py's module docstring). At "
-        "the LIGHT-profile production simulation budget (M=128), mean TV "
-        "distance is now ~0.20 (White) / ~0.30 (Black), still far outside "
-        "this test's 0.07 tolerance. Remove this marker once H4 is fully "
-        "resolved."
+        "improved (18a'.2/18a'.4) but not resolved (see search.py's module "
+        "docstring). At the LIGHT-profile production simulation budget "
+        "(M=128), mean TV distance is now ~0.18 (White) / ~0.30 (Black), "
+        "still far outside this test's 0.07 tolerance. Remove this marker "
+        "once H4 is fully resolved."
     ),
 )
 def test_unequal_support_average_strategy_converges_to_known_equilibrium() -> None:
@@ -593,3 +594,52 @@ def test_unequal_support_average_strategy_converges_to_known_equilibrium() -> No
 
     assert statistics.mean(white_tv) < 0.07
     assert statistics.mean(black_tv) < 0.07
+
+
+# --- v3 18a'.4: Hedge / optimistic Hedge, exposed as configurable
+# alternatives to (optimistic) RM+ -------------------------------------
+# Not asserted to beat RM+ here -- properly comparing selection rules on
+# real fixtures is 18d.2's job. This is a regression-safety net for the
+# selection dispatch itself: every mode must run cleanly end-to-end and
+# produce a valid probability distribution, on both a chess-engine fixture
+# (Matching Pennies) and the asymmetric ones, without crashing or drifting
+# outside [0, 1] / failing to sum to 1 (e.g. a NaN from the adaptive Hedge
+# learning rate's log/sqrt, or a stale index from selection-dependent
+# clipping in _update).
+
+
+@pytest.mark.parametrize("selection", ["regret_matching", "hedge", "optimistic_hedge"])
+def test_selection_modes_produce_valid_distributions_on_matching_pennies(
+    selection: str,
+) -> None:
+    evaluator: Evaluator = _UniformPriorEvaluator()
+    root = make_root(_dodge_state())
+    run_simulations(
+        root, RULESET, evaluator, 2000, random.Random(0),
+        prior_weight=1.0, epsilon=0.02, selection=selection, max_depth=1,
+    )
+    assert root.white is not None and root.black is not None
+    for stats in (root.white, root.black):
+        strategy = stats.average_strategy()
+        assert strategy.keys() == stats.actions.keys()
+        assert all(0.0 <= p <= 1.0 for p in strategy.values())
+        assert sum(strategy.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("selection", ["regret_matching", "hedge", "optimistic_hedge"])
+def test_selection_modes_produce_valid_distributions_on_asymmetric_fixtures(
+    selection: str,
+) -> None:
+    evaluator = _MatrixGameEvaluator(
+        _RPS_MATRIX, _RPS_WHITE_DEST, _BLACK_DEST_3, _RPS_SCALE
+    )
+    root = make_root(_rps_state())
+    run_simulations(
+        root, RULESET, evaluator, SearchConfig().simulations, random.Random(0),
+        prior_weight=1.0, epsilon=0.02, selection=selection, max_depth=1,
+    )
+    assert root.white is not None and root.black is not None
+    for stats in (root.white, root.black):
+        strategy = stats.average_strategy()
+        assert all(0.0 <= p <= 1.0 for p in strategy.values())
+        assert sum(strategy.values()) == pytest.approx(1.0, abs=1e-6)

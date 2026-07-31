@@ -30,7 +30,10 @@ class SearchConfig:
     """SM-MCTS parameters (LIGHT: M=128 simulations/move, §4.3)."""
 
     simulations: int = 128
-    # Regret-matching is the v1 in-tree rule; "exp3" is the documented fallback.
+    # "regret_matching" (optimistic RM+, v3 18a'.4) is the default in-tree
+    # rule; "hedge"/"optimistic_hedge" are configurable alternatives (also
+    # 18a'.4) -- see learn.search._regret_matching_strategy/_hedge_
+    # distribution. Comparing them properly on real fixtures is 18d.2's job.
     selection: str = "regret_matching"
     prior_weight: float = 1.0  # blends the network prior into the RM initializer
     temperature: float = 1.0  # early-game sampling temperature for self-play
