@@ -203,15 +203,22 @@ def slot1_legal_actions(
     """``index -> action`` for every action that can legally **start** a
     program: either a legal single-action program ``(a,)`` (Move/Castle, or
     any action when no displacement exists, L2) or the first of some legal
-    pair ``(a, b)`` (a Reserve/Cancel completed by a Move/Castle)."""
+    pair ``(a, b)`` (a Reserve/Cancel completed by a Move/Castle).
+
+    v3 18a.3 (audit B9): builds one `occupant` lookup up front and passes
+    it to every `is_legal_program` call in this O(pool) x O(displacements)
+    loop, instead of each Reserve candidate's L6 check rebuilding its own
+    from `state.board` -- the same pattern `agents.candidates.reserve_
+    candidates` already uses (e331623)."""
+    occupant = geometry.occupant_lookup(state.board)
     pool = _single_action_pool(state, color)
     displacements = [a for a in pool if isinstance(a, Move | Castle)]
     result: dict[int, Action] = {}
     for action in pool:
-        if is_legal_program(state, (action,), color, ruleset):
+        if is_legal_program(state, (action,), color, ruleset, occupant=occupant):
             _register(result, state, action)
         elif ruleset.n_actions >= 2 and any(
-            is_legal_program(state, (action, second), color, ruleset)
+            is_legal_program(state, (action, second), color, ruleset, occupant=occupant)
             for second in displacements
         ):
             _register(result, state, action)
@@ -255,13 +262,19 @@ def slot2_legal_actions(
     """Given a legal slot-1 `first`, return ``(index -> second action, single_
     action_legal)``: the legal second actions ``b`` such that ``(first, b)`` is
     a legal program, and whether the single-action program ``(first,)`` itself
-    is legal (the ``NO_SECOND_INDEX`` entry of the slot-2 head)."""
-    single_action_legal = is_legal_program(state, (first,), color, ruleset)
+    is legal (the ``NO_SECOND_INDEX`` entry of the slot-2 head).
+
+    v3 18a.3 (audit B9): see `slot1_legal_actions`'s docstring -- same fix,
+    one `occupant` lookup for the whole O(pool) loop."""
+    occupant = geometry.occupant_lookup(state.board)
+    single_action_legal = is_legal_program(
+        state, (first,), color, ruleset, occupant=occupant
+    )
     result: dict[int, Action] = {}
     if ruleset.n_actions >= 2:
         for second in _second_action_candidates(state, color, first):
             program: Program = (first, second)
-            if is_legal_program(state, program, color, ruleset):
+            if is_legal_program(state, program, color, ruleset, occupant=occupant):
                 _register(result, state, second)
     return result, single_action_legal
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from simult_chess.core import geometry
 from simult_chess.core.collision import conflicts
+from simult_chess.core.geometry import OccupantLookup
 from simult_chess.core.types import (
     Action,
     Cancel,
@@ -238,9 +239,27 @@ def check_l5_own_consistency(
 
 
 def check_l6_geometric_legality(
-    state: State, program: Program, color: Color
+    state: State,
+    program: Program,
+    color: Color,
+    *,
+    occupant: OccupantLookup | None = None,
 ) -> list[Violation]:
-    """L6 — each Move/Reserve/Castle/Cancel satisfies its own geometric predicate."""
+    """L6 — each Move/Reserve/Castle/Cancel satisfies its own geometric predicate.
+
+    v3 18a.3 (audit B9): `occupant`, if given, is reused for every `Reserve`
+    action's admissibility check instead of each one rebuilding its own
+    lookup from `state.board` (`geometry.capturing_pattern_trajectory`'s own
+    convenience behaviour) -- the same fix already applied to
+    `agents.candidates.reserve_candidates` (e331623). Optional and `None`
+    by default so every existing caller's behaviour is unchanged; hot paths
+    that call this many times against the same `state` (the legality masks
+    in `learn.action_grid`) build one `occupant` up front and pass it
+    through `check_partial_program`/`check_legal_program`/`is_legal_program`.
+    """
+    resolved_occupant = occupant if occupant is not None else geometry.occupant_lookup(
+        state.board
+    )
     violations: list[Violation] = []
     for index, action in enumerate(program):
         if isinstance(action, Move):
@@ -280,8 +299,12 @@ def check_l6_geometric_legality(
                     if protege_move is not None
                     else state.board[action.protege]
                 )
-                pattern = geometry.capturing_pattern_trajectory(
-                    state, action.defender, target
+                pattern = geometry.capturing_pattern_trajectory_at(
+                    action.defender.typ,
+                    action.defender.color,
+                    state.board[action.defender],
+                    target,
+                    resolved_occupant,
                 )
                 if pattern is None:
                     detail = (
@@ -306,7 +329,12 @@ def check_l6_geometric_legality(
 
 
 def check_partial_program(
-    state: State, program: Program, color: Color, ruleset: RuleSet
+    state: State,
+    program: Program,
+    color: Color,
+    ruleset: RuleSet,
+    *,
+    occupant: OccupantLookup | None = None,
 ) -> list[Violation]:
     """Run only the clauses valid for a *program under construction* (Phase 16.1).
 
@@ -319,30 +347,47 @@ def check_partial_program(
     :func:`check_legal_program`, never a copy.
 
     ``ruleset`` is accepted for signature parity with :func:`check_legal_program`
-    (L3–L6 do not currently read it).
+    (L3–L6 do not currently read it). ``occupant`` (v3 18a.3, audit B9) is
+    forwarded to :func:`check_l6_geometric_legality` -- see its docstring.
     """
     del ruleset
     return [
         *check_l3_distinct_actors(state, program, color),
         *check_l4_cooldown_respected(state, program, color),
         *check_l5_own_consistency(state, program, color),
-        *check_l6_geometric_legality(state, program, color),
+        *check_l6_geometric_legality(state, program, color, occupant=occupant),
     ]
 
 
 def check_legal_program(
-    state: State, program: Program, color: Color, ruleset: RuleSet
+    state: State,
+    program: Program,
+    color: Color,
+    ruleset: RuleSet,
+    *,
+    occupant: OccupantLookup | None = None,
 ) -> list[Violation]:
-    """Run L1-L6 in sequence, returning every violation found (empty if legal)."""
+    """Run L1-L6 in sequence, returning every violation found (empty if legal).
+
+    ``occupant`` (v3 18a.3, audit B9): see :func:`check_l6_geometric_legality`.
+    """
     return [
         *check_l1_budget(program, ruleset),
         *check_l2_mandatory_displacement(state, program, color),
-        *check_partial_program(state, program, color, ruleset),
+        *check_partial_program(state, program, color, ruleset, occupant=occupant),
     ]
 
 
 def is_legal_program(
-    state: State, program: Program, color: Color, ruleset: RuleSet
+    state: State,
+    program: Program,
+    color: Color,
+    ruleset: RuleSet,
+    *,
+    occupant: OccupantLookup | None = None,
 ) -> bool:
-    """The boolean predicate :math:`L(s,\\pi_\\omega)` (spec §4.4)."""
-    return check_legal_program(state, program, color, ruleset) == []
+    """The boolean predicate :math:`L(s,\\pi_\\omega)` (spec §4.4).
+
+    ``occupant`` (v3 18a.3, audit B9): see :func:`check_l6_geometric_legality`.
+    """
+    return check_legal_program(state, program, color, ruleset, occupant=occupant) == []
