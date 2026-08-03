@@ -199,10 +199,25 @@ def make_root(state: State) -> SearchNode:
     return SearchNode(state=state, is_terminal=False)
 
 
-def _rm_plus_distribution(stats: _ColorStats) -> dict[int, float]:
+class _RegretStats(Protocol):
+    """The subset of `_ColorStats` (and v3 18c's `row_sketch._ProgramStats`)
+    `_rm_plus_distribution`/`_hedge_distribution` actually need -- factored
+    out so both a slot-1-indexed and a program-pool-indexed stats object can
+    share the identical RM+/Hedge math, no duplicated optimizer logic.
+    `regret`'s own key set is always exactly the arm-index space (both
+    dataclasses' `__post_init__` guarantee this), so `len(regret)` and
+    `regret`'s keys stand in for what used to be `len(stats.actions)` and
+    `stats.actions`."""
+
+    regret: dict[int, float]
+    last_regret_increment: dict[int, float]
+    node_visits: int
+
+
+def _rm_plus_distribution(stats: _RegretStats) -> dict[int, float]:
     """Optimistic RM+ (v3 18a'.4): normalizes `positive(regret +
     last_regret_increment)`. See `_regret_matching_strategy`'s docstring."""
-    n = len(stats.actions)
+    n = len(stats.regret)
     predicted_regret = {
         a: r + stats.last_regret_increment.get(a, 0.0) for a, r in stats.regret.items()
     }
@@ -211,13 +226,13 @@ def _rm_plus_distribution(stats: _ColorStats) -> dict[int, float]:
     return (
         {a: p / total for a, p in positive.items()}
         if total > 0.0
-        else dict.fromkeys(stats.actions, 1.0 / n)
+        else dict.fromkeys(stats.regret, 1.0 / n)
         if n
         else {}
     )
 
 
-def _hedge_distribution(stats: _ColorStats, optimistic: bool) -> dict[int, float]:
+def _hedge_distribution(stats: _RegretStats, optimistic: bool) -> dict[int, float]:
     """Hedge / optimistic Hedge (v3 18a'.4, "expose Hedge and optimistic
     Hedge as configurable alternatives"): exponential weights over the
     *unclipped* cumulative signal `_update` accumulates into `stats.regret`
@@ -233,7 +248,7 @@ def _hedge_distribution(stats: _ColorStats, optimistic: bool) -> dict[int, float
     paired comparison across selection rules); this is deliberately just a
     working, validated alternative to select via `SearchConfig.selection`,
     not a tuned-to-win replacement."""
-    n = len(stats.actions)
+    n = len(stats.regret)
     if n == 0:
         return {}
     eta = math.sqrt(2.0 * math.log(max(n, 2)) / max(1, stats.node_visits))
