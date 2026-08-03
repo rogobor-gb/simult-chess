@@ -105,20 +105,27 @@ class NashConvResult:
     nashconv: float
 
 
-def restricted_support_nashconv(
+def restricted_support_nashconv_exact(
     net: SimultChessNet,
     state: State,
     ruleset: RuleSet,
+    matrix: _FloatArray,
+    white_support: tuple[Program, ...],
+    black_support: tuple[Program, ...],
     search_config: SearchConfig,
     fixture_name: str,
     rng: random.Random,
     *,
     device: torch.device | None = None,
 ) -> NashConvResult:
-    """Exact restricted-support NashConv of the learned agent's policy at a
-    chi-symmetric fixture (design §6.3). Black's support is White's support
-    mirrored (chi-closed), matching the M5 construction, so `U = -U^T`
-    (`solver.collision.mirror_program`, the same identity M5 itself proves).
+    """`restricted_support_nashconv`'s math (v3 18b.3), generalized to a
+    fixture with no chi symmetry: the caller supplies White's and Black's
+    own -- possibly unrelated -- supports and the payoff matrix directly,
+    rather than deriving Black's support as White's mirror and the matrix
+    from `build_stage_matrix`'s one-ply material surrogate. Meant to be fed
+    `solve_exact`'s exhaustive root programs and its exact (recursively
+    backward-induced, not surrogate) `stage_matrix`, so `solved_value` is a
+    genuinely exact game value rather than a one-ply approximation of one.
 
     NashConv, for a zero-sum game, reduces to
     ``max_x x^T U pi_B - min_y pi_W^T U y`` (best-response value for White
@@ -126,16 +133,13 @@ def restricted_support_nashconv(
     policy) -- zero exactly at a Nash equilibrium, positive otherwise.
     """
     evaluator = NetworkEvaluator(net, device=device)
-    support_white = enumerate_support(state, Color.WHITE, ruleset, rng)
-    support_black = tuple(mirror_program(program) for program in support_white)
-    matrix = build_stage_matrix(state, support_white, support_black, ruleset)
     solved = solve_zero_sum(matrix)
 
     pi_white = restricted_support_policy(
-        evaluator, state, ruleset, Color.WHITE, support_white, search_config, rng
+        evaluator, state, ruleset, Color.WHITE, white_support, search_config, rng
     )
     pi_black = restricted_support_policy(
-        evaluator, state, ruleset, Color.BLACK, support_black, search_config, rng
+        evaluator, state, ruleset, Color.BLACK, black_support, search_config, rng
     )
 
     actual_value = float(pi_white @ matrix @ pi_black)
@@ -150,4 +154,36 @@ def restricted_support_nashconv(
         best_response_white=best_response_white,
         best_response_black=best_response_black,
         nashconv=nashconv,
+    )
+
+
+def restricted_support_nashconv(
+    net: SimultChessNet,
+    state: State,
+    ruleset: RuleSet,
+    search_config: SearchConfig,
+    fixture_name: str,
+    rng: random.Random,
+    *,
+    device: torch.device | None = None,
+) -> NashConvResult:
+    """Exact restricted-support NashConv of the learned agent's policy at a
+    chi-symmetric fixture (design §6.3). Black's support is White's support
+    mirrored (chi-closed), matching the M5 construction, so `U = -U^T`
+    (`solver.collision.mirror_program`, the same identity M5 itself proves).
+    """
+    support_white = enumerate_support(state, Color.WHITE, ruleset, rng)
+    support_black = tuple(mirror_program(program) for program in support_white)
+    matrix = build_stage_matrix(state, support_white, support_black, ruleset)
+    return restricted_support_nashconv_exact(
+        net,
+        state,
+        ruleset,
+        matrix,
+        support_white,
+        support_black,
+        search_config,
+        fixture_name,
+        rng,
+        device=device,
     )
