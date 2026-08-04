@@ -83,6 +83,7 @@ from simult_chess.core.phi import phi
 from simult_chess.core.types import Action, Castle, Color, Move, Program, State
 from simult_chess.learn.action_grid import (
     NO_SECOND_INDEX,
+    encode_action,
     sample_index,
     slot1_legal_actions,
     slot2_legal_actions,
@@ -533,3 +534,20 @@ def read_out(
         row_entropy=equilibrium.row_entropy,
         col_entropy=equilibrium.col_entropy,
     )
+
+
+def project_slot1_marginal(
+    strategy: FloatArray, programs: tuple[Program, ...], state: State
+) -> dict[int, float]:
+    """The slot-1 marginal of a pool-level distribution (`read_out`'s
+    `row_strategy`/`col_strategy`): sums `strategy[i]` over every pool
+    entry `i` sharing the same first action's grid index. The "slot-1
+    marginal" half of the roadmap's own factorisation language ("the
+    policy target x*_tau... factorises into a slot-1 marginal and a
+    slot-2 conditional") -- a real, learn.search-compatible `PhaseRecord.
+    white_slot1_target`-shaped soft target, not an approximation of one."""
+    marginal: dict[int, float] = {}
+    for program, mass in zip(programs, strategy, strict=True):
+        a1_index = encode_action(program[0], state)
+        marginal[a1_index] = marginal.get(a1_index, 0.0) + float(mass)
+    return marginal

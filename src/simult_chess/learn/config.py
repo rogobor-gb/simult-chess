@@ -41,3 +41,11 @@ class SearchConfig:
     # floor, turning "every action visited infinitely often" (SM-MCTS convergence
     # theorem hypothesis H3) from an empirical observation into a guarantee --
     # see learn.search._regret_matching_strategy's docstring.
+    node_solver: str = "slot1"
+    # v3 18c.1: "slot1" (default) is learn.search's slot-1-only SM-MCTS,
+    # unchanged; "row_sketch" opts a caller (currently only learn.selfplay)
+    # into learn.row_sketch's program-pool node solver instead -- see that
+    # module's docstring for what changes. Every existing caller/test keeps
+    # today's exact behaviour by not setting this.
+    pool_size: int = 12  # row_sketch's own k -- ignored unless node_solver="row_sketch"
+    pool_seed_size: int = 6  # row_sketch's own k1 -- ditto
