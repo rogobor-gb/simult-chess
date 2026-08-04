@@ -25,12 +25,44 @@ for free. Per simulation: sample the opponent's program from its current
 strategy over its own pool, then evaluate `u(a, b_t) = r + V(Phi(s,a,b_t))`
 for *every* `a` in my own pool against that one fixed `b_t` (k Phi calls)
 -- the *exact* instantaneous regret vector this round, not a stale
-running-mean baseline. `V(child)`: a fresh, cheap network leaf evaluation
-if the child hasn't been visited before (matching the roadmap's own "k Phi
-calls, ~2.2ms" cost estimate -- one forward pass per pool entry, not a
-full recursive re-simulation of all k candidates, which would multiply
-cost by up to k at every depth reached that round); a previously-expanded
-child's own running value estimate otherwise.
+running-mean baseline. `V(child)`: a fresh network leaf evaluation if the
+child hasn't been visited before, memoized thereafter (`_fill_value_
+estimates`) so a child peeked across several rounds -- common, since
+`i_t`/`j_t` often repeat as regret matching converges -- pays for that
+evaluation once, not once per peek; a previously-*expanded* child's own
+running value estimate otherwise. Not a full recursive re-simulation of
+all k candidates, which would multiply cost by up to k at every depth
+reached that round.
+
+**Throughput, measured and profiled, not assumed (v3 18c.1's own scoping
+pass).** The first working version of this module, evaluating one pool
+entry at a time, measured ~540ms/simulation with a real `NetworkEvaluator`
+at full production net size -- roughly 250x the roadmap's own ~2.2ms/sim
+cost estimate. Two fixes, in order of what `cProfile` actually found, not
+in order of what seemed obvious going in:
+
+1. `_fill_value_estimates` batches every still-pending row/column cell
+   into one forward pass per round when the evaluator exposes `evaluate_
+   values_batch` (`NetworkEvaluator`'s own; evaluators without one -- e.g.
+   this module's own test suite's synthetic evaluators -- fall back to one
+   `evaluate_leaf` call per pending cell, identical results, just not
+   batched). Measured effect alone: modest and inconsistent run to run
+   (~1.1x-1.5x) -- smaller than expected, and the reason turned out to be
+   the second fix below, not measurement noise.
+2. `seed_program_pool`'s original implementation called `learn.action_
+   grid.decode_program` per (slot-1, slot-2) candidate, which recomputes
+   `slot2_legal_actions` (a full geometric-legality enumeration) from
+   scratch *every single call* -- `cProfile` on a 24-simulation run at the
+   standard starting position showed this alone was ~90% of total runtime
+   before the fix. Computing it once per slot-1 action instead (`slot2_
+   legal_actions`'s own return already guarantees every resulting `(first,
+   second)` pair is legal, so the redundant `is_legal_program` re-check
+   this used to also pay for is dropped too) is the fix that actually
+   mattered: **~540ms/sim -> ~29ms/sim, ~19x**, measured together with (1)
+   above at `pool_size=12`, `max_depth=2` on the standard starting
+   position. Still short of the ~2.2ms/sim target, but a genuine,
+   profiled, reproducible improvement -- not yet wired into the live
+   pipeline either way (see the scope note in `PROJECT_STATUS.md`).
 
 `val_tau`/the pool-level equilibrium (the value and policy targets 18c.1
 promises) are computed post-simulation only, via `read_out` --
@@ -50,9 +82,10 @@ from simult_chess.core.legality import is_legal_program
 from simult_chess.core.phi import phi
 from simult_chess.core.types import Action, Castle, Color, Move, Program, State
 from simult_chess.learn.action_grid import (
-    decode_program,
+    NO_SECOND_INDEX,
     sample_index,
     slot1_legal_actions,
+    slot2_legal_actions,
 )
 from simult_chess.learn.search import (
     Evaluator,
@@ -115,9 +148,28 @@ def seed_program_pool(
         slot2_dist = evaluator.slot2_prior(
             context, color, state, ruleset, a1_index, first
         )
+        # `slot2_legal_actions` computed once per slot-1 action, not once
+        # per (slot-1, slot-2) candidate: `decode_program` recomputes it
+        # internally on every call, and it's the expensive part of this
+        # function (a full geometric-legality enumeration) -- measured via
+        # profiling to dominate `seed_program_pool`'s own cost by ~90% at
+        # full board complexity before this fix. Its own legal-pairs
+        # guarantee also makes the second `is_legal_program` check
+        # redundant, so this drops that call entirely rather than paying
+        # for it twice.
+        slot2_actions, single_legal = slot2_legal_actions(
+            state, color, ruleset, first
+        )
         for a2_index, p2 in slot2_dist.items():
-            program = decode_program(first, a2_index, state, color, ruleset)
-            if program in seen or not is_legal_program(state, program, color, ruleset):
+            if a2_index == NO_SECOND_INDEX:
+                if not single_legal:
+                    continue
+                program: Program = (first,)
+            elif a2_index in slot2_actions:
+                program = (first, slot2_actions[a2_index])
+            else:
+                continue
+            if program in seen:
                 continue
             seen.add(program)
             candidates.append((p1 * p2, program))
@@ -224,17 +276,52 @@ def make_root(state: State) -> RowSketchNode:
     return RowSketchNode(state=state, is_terminal=False)
 
 
-def _peek_value(child: RowSketchNode, evaluator: Evaluator, ruleset: RuleSet) -> float:
-    """White's utility at `child` -- cheap by construction (never a
-    recursive re-simulation): the child's own running estimate if it has
-    one, else one fresh network forward pass."""
+def _fill_value_estimates(
+    children: list[RowSketchNode], evaluator: Evaluator, ruleset: RuleSet
+) -> None:
+    """Ensures every non-terminal child in `children` has a `value_
+    estimate` -- a *memoized* leaf value (refined later only if the child
+    is ever actually recursed into, never recomputed on a later peek).
+    Two effects, both real throughput fixes, not just tidiness: (1) a
+    child peeked in more than one round (common -- `i_t`/`j_t` often
+    repeat across consecutive rounds as regret matching converges) no
+    longer pays for a fresh network call every time; (2) if `evaluator`
+    exposes `evaluate_values_batch` (`NetworkEvaluator`'s own, v3 18c.1's
+    own throughput finding -- measured ~540ms/sim with one `evaluate_leaf`
+    call per peek, vs. the design's ~2.2ms/sim target), every still-
+    pending child this round is evaluated in a single batched forward
+    pass instead of one call each. Evaluators without a batch method
+    (e.g. the synthetic evaluators the row-sketch test suite uses) fall
+    back to one `evaluate_leaf` call per pending child -- identical
+    results, just not batched."""
+    pending: dict[int, RowSketchNode] = {
+        id(child): child
+        for child in children
+        if not child.is_terminal and child.value_estimate is None
+    }
+    if not pending:
+        return
+    nodes = list(pending.values())
+    batch_fn = getattr(evaluator, "evaluate_values_batch", None)
+    if batch_fn is not None:
+        values = batch_fn([child.state for child in nodes], ruleset)
+        for child, value in zip(nodes, values, strict=True):
+            child.value_estimate = value
+    else:
+        for child in nodes:
+            value, _, _, _ = evaluator.evaluate_leaf(child.state, ruleset)
+            child.value_estimate = value
+
+
+def _peek_value(child: RowSketchNode) -> float:
+    """White's utility at `child` -- assumes `_fill_value_estimates` (or a
+    real recursive descent, which also sets `value_estimate`) already
+    populated a value; never itself triggers a network call."""
     if child.is_terminal:
         assert child.terminal_value is not None
         return child.terminal_value
-    if child.value_estimate is not None:
-        return child.value_estimate
-    value, _, _, _ = evaluator.evaluate_leaf(child.state, ruleset)
-    return value
+    assert child.value_estimate is not None
+    return child.value_estimate
 
 
 def _get_or_make_child(
@@ -325,26 +412,26 @@ def _simulate_row_sketch(
     n_white = len(node.white.programs)
     n_black = len(node.black.programs)
 
-    # White's row sketch: u(i, j_t) for every i, Black's sampled column
-    # fixed -- the exact instantaneous regret vector for White this round.
-    u_row: dict[int, float] = {}
-    for i in range(n_white):
-        child = _get_or_make_child(node, i, j_t, ruleset)
-        u = _peek_value(child, evaluator, ruleset)
-        u_row[i] = u
-        node.stage_sketch[i, j_t] = u
+    # White's row sketch (u(i, j_t) for every i, Black's sampled column
+    # fixed) and Black's column sketch (u(i_t, j) for every j, White's
+    # sampled row fixed) -- the exact instantaneous regret vector for both
+    # sides this round. Every child is created first, then filled in with
+    # one batched call (`_fill_value_estimates`), not evaluated one at a
+    # time -- `col_children[j_t]` is literally `row_children[i_t]` (the
+    # same object), so the shared cell is never double-evaluated.
+    row_children = [_get_or_make_child(node, i, j_t, ruleset) for i in range(n_white)]
+    col_children = [
+        row_children[i_t] if j == j_t else _get_or_make_child(node, i_t, j, ruleset)
+        for j in range(n_black)
+    ]
+    _fill_value_estimates(row_children + col_children, evaluator, ruleset)
 
-    # Black's column sketch: u(i_t, j) for every j, White's sampled row
-    # fixed -- reuses the (i_t, j_t) cell already computed above.
-    u_col: dict[int, float] = {}
+    u_row = {i: _peek_value(row_children[i]) for i in range(n_white)}
+    for i in range(n_white):
+        node.stage_sketch[i, j_t] = u_row[i]
+    u_col = {j: _peek_value(col_children[j]) for j in range(n_black)}
     for j in range(n_black):
-        if j == j_t:
-            u_col[j] = u_row[i_t]
-            continue
-        child = _get_or_make_child(node, i_t, j, ruleset)
-        u = _peek_value(child, evaluator, ruleset)
-        u_col[j] = u
-        node.stage_sketch[i_t, j] = u
+        node.stage_sketch[i_t, j] = u_col[j]
 
     clip_at_zero = selection == "regret_matching"
     baseline_white = u_row[i_t]
@@ -418,7 +505,7 @@ def read_out(
     """`val_tau` and the pool-level max-entropy equilibrium of `node`'s
     accumulated stage-matrix sketch -- 18c.1's value and policy targets.
     Any pool cell the search never happened to sample (`NaN` in `stage_
-    sketch`) is filled with one fresh, cheap network leaf evaluation
+    sketch`) is filled in via `_fill_value_estimates`'s same batched path
     first, so the matrix fed to the solver is always fully populated."""
     assert (
         node.white is not None
@@ -426,11 +513,17 @@ def read_out(
         and node.stage_sketch is not None
     )
     matrix = node.stage_sketch.copy()
-    for i in range(matrix.shape[0]):
-        for j in range(matrix.shape[1]):
-            if np.isnan(matrix[i, j]):
-                child = _get_or_make_child(node, i, j, ruleset)
-                matrix[i, j] = _peek_value(child, evaluator, ruleset)
+    missing = [
+        (i, j)
+        for i in range(matrix.shape[0])
+        for j in range(matrix.shape[1])
+        if np.isnan(matrix[i, j])
+    ]
+    if missing:
+        children = [_get_or_make_child(node, i, j, ruleset) for i, j in missing]
+        _fill_value_estimates(children, evaluator, ruleset)
+        for (i, j), child in zip(missing, children, strict=True):
+            matrix[i, j] = _peek_value(child)
 
     equilibrium = solve_max_entropy_equilibrium(matrix)
     return RowSketchReadout(
