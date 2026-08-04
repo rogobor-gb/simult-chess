@@ -40,7 +40,13 @@ from simult_chess.core.types import Color, State
 from simult_chess.core.violation import Violation
 from simult_chess.interop.encoding import encode_state
 from simult_chess.invariants.harness import run_phase
-from simult_chess.learn.action_grid import decode_program, sample_index
+from simult_chess.learn import row_sketch
+from simult_chess.learn.action_grid import (
+    NO_SECOND_INDEX,
+    decode_program,
+    encode_action,
+    sample_index,
+)
 from simult_chess.learn.agent import NetworkEvaluator
 from simult_chess.learn.config import SearchConfig
 from simult_chess.learn.net import SimultChessNet
@@ -104,39 +110,85 @@ def play_one_selfplay_game(
     phases: list[PhaseRecord] = []
 
     for _ in range(max_phases):
-        root = make_root(state)
-        run_simulations(
-            root,
-            ruleset,
-            evaluator,
-            search_config.simulations,
-            rng,
-            prior_weight=search_config.prior_weight,
-            epsilon=search_config.epsilon_floor,
-            selection=search_config.selection,
-        )
-        assert root.white is not None and root.black is not None and (
-            root.context is not None
-        )
+        if search_config.node_solver == "row_sketch":
+            # v3 18c.1: learn.row_sketch's program-pool node solver in
+            # place of learn.search's slot-1-only SM-MCTS -- opt-in only
+            # (SearchConfig.node_solver defaults to "slot1"), see that
+            # module's docstring for what changes and why. A pool entry
+            # already *is* a full program, so there's no separate slot-2
+            # sampling step here (unlike the branch below): the played
+            # program is sampled directly from the pool-level policy.
+            root_rs = row_sketch.make_root(state)
+            row_sketch.run_simulations(
+                root_rs,
+                ruleset,
+                evaluator,
+                search_config.simulations,
+                rng,
+                epsilon=search_config.epsilon_floor,
+                selection=search_config.selection,
+                pool_size=search_config.pool_size,
+                pool_seed_size=search_config.pool_seed_size,
+            )
+            readout = row_sketch.read_out(root_rs, evaluator, ruleset)
+            assert root_rs.white is not None and root_rs.black is not None
 
-        white_target = root.white.average_strategy()
-        black_target = root.black.average_strategy()
-        w1 = sample_index(white_target, rng)
-        b1 = sample_index(black_target, rng)
-        first_white = root.white.actions[w1]
-        first_black = root.black.actions[b1]
+            white_target = row_sketch.project_slot1_marginal(
+                readout.row_strategy, root_rs.white.programs, state
+            )
+            black_target = row_sketch.project_slot1_marginal(
+                readout.col_strategy, root_rs.black.programs, state
+            )
+            i_white = sample_index(dict(enumerate(readout.row_strategy)), rng)
+            i_black = sample_index(dict(enumerate(readout.col_strategy)), rng)
+            program_white = root_rs.white.programs[i_white]
+            program_black = root_rs.black.programs[i_black]
+            w1 = encode_action(program_white[0], state)
+            b1 = encode_action(program_black[0], state)
+            w2 = (
+                encode_action(program_white[1], state)
+                if len(program_white) > 1
+                else NO_SECOND_INDEX
+            )
+            b2 = (
+                encode_action(program_black[1], state)
+                if len(program_black) > 1
+                else NO_SECOND_INDEX
+            )
+        else:
+            root = make_root(state)
+            run_simulations(
+                root,
+                ruleset,
+                evaluator,
+                search_config.simulations,
+                rng,
+                prior_weight=search_config.prior_weight,
+                epsilon=search_config.epsilon_floor,
+                selection=search_config.selection,
+            )
+            assert root.white is not None and root.black is not None and (
+                root.context is not None
+            )
 
-        white_slot2_dist = evaluator.slot2_prior(
-            root.context, Color.WHITE, state, ruleset, w1, first_white
-        )
-        black_slot2_dist = evaluator.slot2_prior(
-            root.context, Color.BLACK, state, ruleset, b1, first_black
-        )
-        w2 = sample_index(white_slot2_dist, rng)
-        b2 = sample_index(black_slot2_dist, rng)
+            white_target = root.white.average_strategy()
+            black_target = root.black.average_strategy()
+            w1 = sample_index(white_target, rng)
+            b1 = sample_index(black_target, rng)
+            first_white = root.white.actions[w1]
+            first_black = root.black.actions[b1]
 
-        program_white = decode_program(first_white, w2, state, Color.WHITE, ruleset)
-        program_black = decode_program(first_black, b2, state, Color.BLACK, ruleset)
+            white_slot2_dist = evaluator.slot2_prior(
+                root.context, Color.WHITE, state, ruleset, w1, first_white
+            )
+            black_slot2_dist = evaluator.slot2_prior(
+                root.context, Color.BLACK, state, ruleset, b1, first_black
+            )
+            w2 = sample_index(white_slot2_dist, rng)
+            b2 = sample_index(black_slot2_dist, rng)
+
+            program_white = decode_program(first_white, w2, state, Color.WHITE, ruleset)
+            program_black = decode_program(first_black, b2, state, Color.BLACK, ruleset)
 
         planes, scalars = encode_state(state, ruleset)
         phases.append(
