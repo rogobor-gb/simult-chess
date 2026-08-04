@@ -22,6 +22,7 @@ Conforms to `agents.base.Agent` so it drops into `referee.match`,
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -105,6 +106,32 @@ class NetworkEvaluator:
         with torch.no_grad():
             logits = self.net.slot2_logits(context, a1_index, color)
         return _masked_softmax_dict(logits[0].cpu(), indices)
+
+    def evaluate_values_batch(
+        self, states: Sequence[State], ruleset: RuleSet
+    ) -> list[float]:
+        """Like `evaluate_leaf`, but for many states in one forward pass.
+        `learn.row_sketch`'s row/column sketch peeks up to `~2*pool_size`
+        leaf values per simulated round; batching them is the difference
+        between the design's own ~2.2ms/sim cost model and the ~540ms/sim
+        actually measured with one `evaluate_leaf` call per peek (v3 18c.1's
+        own throughput finding -- this method is the fix). Discards the
+        policy heads' output: `row_sketch` only ever peeks a value here,
+        never a prior, for these candidate children -- the saving is from
+        batching the trunk's forward pass across all of them at once, not
+        from skipping the (comparatively cheap) policy heads, which still
+        run since `SimultChessNet.forward` always computes both."""
+        if not states:
+            return []
+        planes_np, scalars_np = zip(
+            *(encode_state(state, ruleset) for state in states), strict=True
+        )
+        planes = torch.from_numpy(np.stack(planes_np)).to(self.device)
+        scalars = torch.from_numpy(np.stack(scalars_np)).to(self.device)
+        with torch.no_grad():
+            _, _, value, _ = self.net(planes, scalars)
+        result: list[float] = value.cpu().tolist()
+        return result
 
 
 @dataclass
