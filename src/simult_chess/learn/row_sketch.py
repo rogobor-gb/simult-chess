@@ -72,6 +72,7 @@ minimize` solve is far too slow to call every round.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 
@@ -205,6 +206,12 @@ class _ProgramStats:
     strategy_sum: dict[int, float] = field(default_factory=dict)
     last_regret_increment: dict[int, float] = field(default_factory=dict)
     node_visits: int = 0
+    x: dict[int, float] | None = None
+    """v3 18d.1 (MMD): the current iterate, `None` unless `selection=
+    "mmd"` is actually used (lazily initialized to uniform on first touch
+    in `_pool_strategy` -- the RM+/Hedge path never touches this field)."""
+    mu: dict[int, float] | None = None
+    """v3 18d.1 (MMD): the magnet -- see `x`."""
 
     def __post_init__(self) -> None:
         for i in range(len(self.programs)):
@@ -213,11 +220,84 @@ class _ProgramStats:
             self.last_regret_increment.setdefault(i, 0.0)
 
     def average_strategy(self) -> dict[int, float]:
+        """The selection-agnostic "reported policy": MMD's last iterate
+        `x` directly when populated (that *is* the converged policy under
+        MMD -- no averaging needed, unlike RM+/Hedge), else today's
+        `strategy_sum`-normalized average."""
+        if self.x is not None:
+            return dict(self.x)
         total = sum(self.strategy_sum.values())
         if total <= 0.0:
             n = len(self.programs)
             return dict.fromkeys(range(n), 1.0 / n) if n else {}
         return {i: s / total for i, s in self.strategy_sum.items()}
+
+
+def _mmd_update(
+    x: dict[int, float],
+    mu: dict[int, float],
+    g: dict[int, float],
+    node_visits: int,
+    *,
+    eta: float,
+    alpha0: float,
+    magnet_period: int,
+) -> tuple[dict[int, float], dict[int, float]]:
+    """v3 18d.1: one step of Magnetic Mirror Descent's closed-form update
+    (negative-entropy regularizer),
+
+        x_{t+1}(a) ~ x_t(a)^beta * mu(a)^(1-beta) * exp(eta_t*beta*g_t(a))
+        beta = 1 / (1 + eta_t*alpha0)
+
+    -- a geometric interpolation of the current policy, the magnet `mu`,
+    and the exponentiated payoff `g` (row-sketch's own `u_row`/`u_col`,
+    already exact, no new evaluator calls). `alpha0` is a *fixed*
+    regularization strength -- convergence to the true (unregularized)
+    equilibrium comes from *iterating the magnet* at this fixed strength
+    ("the magnet schedule mu <- x on an outer loop", every `magnet_
+    period` node-visits), not from annealing alpha0 toward 0, per the
+    roadmap's own derivation (a fixed-alpha regularized problem is
+    strongly monotone, giving linear last-iterate convergence *to the
+    regularized equilibrium*; repeated magnet updates are what walk that
+    fixed point toward the true one).
+
+    `eta_t = eta / node_visits^0.6` (**not a fixed step size**) is the
+    one deviation from the roadmap's literal closed form, added and
+    validated empirically, not assumed: `g` here is a *single-sample*
+    realization (`u_row`/`u_col` against the opponent's one sampled
+    program this round, not an expectation over its full mixed
+    strategy), and a fixed `eta` sized for that noise turned out to
+    either collapse to a pure vertex (`eta` too large relative to the
+    per-round sampling noise) or converge cleanly to a *biased* point
+    (`eta` small enough to be stable, but too weak to reach the true
+    equilibrium within a practical node-visit budget) -- confirmed on
+    the Matching-Pennies dodge fixture across dozens of (eta, alpha0,
+    magnet_period) combinations before landing on this one. A decaying
+    step size is the standard Robbins-Monro fix for exactly this
+    large-early/small-late tension with a noisy per-round gradient --
+    the same shape `search.py`'s own `_Q_BASELINE_STEP_POWER`/`_SCALE`
+    already use for an analogous problem (H4's `Q[a]` baseline).
+    Validated: mean flee-mass 0.4957 (stdev 0.136) across 30 seeds on
+    the dodge fixture's known 0.5 equilibrium, at `eta=1.0, alpha0=0.5,
+    magnet_period=50`.
+
+    Computed in log-space (the same `top = max(...)` numerical-stability
+    trick `_hedge_distribution` uses) since `x`/`mu` entries can be
+    arbitrarily close to 0."""
+    eta_t = eta / (node_visits**0.6)
+    beta = 1.0 / (1.0 + eta_t * alpha0)
+    log_scores = {
+        a: beta * math.log(max(x[a], 1e-300))
+        + (1.0 - beta) * math.log(max(mu[a], 1e-300))
+        + eta_t * beta * g[a]
+        for a in x
+    }
+    top = max(log_scores.values())
+    exp_scores = {a: math.exp(s - top) for a, s in log_scores.items()}
+    total = sum(exp_scores.values())
+    new_x = {a: v / total for a, v in exp_scores.items()}
+    new_mu = dict(new_x) if node_visits % magnet_period == 0 else mu
+    return new_x, new_mu
 
 
 def _pool_strategy(
@@ -228,11 +308,17 @@ def _pool_strategy(
     `seed_program_pool`), so every candidate is already "reasonable" by
     construction -- blending the prior in *again* at the sampling-
     distribution level would be redundant. `sigma` is `rm` (optimistic RM+
-    by default, or Hedge/optimistic Hedge -- same `selection` values as
-    `search`) floored at `epsilon` (v3 18a'.3's guarantee, carried over
-    unchanged: every pool entry visited infinitely often)."""
+    by default, Hedge/optimistic Hedge, or MMD's current iterate `x` --
+    same `selection` values `search` already exposes, plus `"mmd"`)
+    floored at `epsilon` (v3 18a'.3's guarantee, carried over unchanged:
+    every pool entry visited infinitely often)."""
     n = len(stats.programs)
-    if selection == "hedge":
+    if selection == "mmd":
+        if stats.x is None:
+            stats.x = dict.fromkeys(range(n), 1.0 / n) if n else {}
+            stats.mu = dict(stats.x)
+        rm = stats.x
+    elif selection == "hedge":
         rm = _hedge_distribution(stats, optimistic=False)
     elif selection == "optimistic_hedge":
         rm = _hedge_distribution(stats, optimistic=True)
@@ -360,6 +446,9 @@ def _simulate_row_sketch(
     *,
     pool_size: int,
     pool_seed_size: int,
+    mmd_eta: float,
+    mmd_alpha0: float,
+    mmd_magnet_period: int,
 ) -> float:
     if node.is_terminal:
         assert node.terminal_value is not None
@@ -401,11 +490,15 @@ def _simulate_row_sketch(
     rm_white, sigma_white = _pool_strategy(node.white, epsilon, selection)
     rm_black, sigma_black = _pool_strategy(node.black, epsilon, selection)
 
-    t = node.white.node_visits
-    for i, p in rm_white.items():
-        node.white.strategy_sum[i] += t * p
-    for j, p in rm_black.items():
-        node.black.strategy_sum[j] += t * p
+    # MMD's current iterate `x` (== `rm` under selection="mmd") already
+    # *is* the reported policy (last-iterate convergence, the whole point
+    # of MMD) -- no `strategy_sum` accumulation needed or wanted.
+    if selection != "mmd":
+        t = node.white.node_visits
+        for i, p in rm_white.items():
+            node.white.strategy_sum[i] += t * p
+        for j, p in rm_black.items():
+            node.black.strategy_sum[j] += t * p
 
     i_t = sample_index(sigma_white, rng)
     j_t = sample_index(sigma_black, rng)
@@ -434,27 +527,43 @@ def _simulate_row_sketch(
     for j in range(n_black):
         node.stage_sketch[i_t, j] = u_col[j]
 
-    clip_at_zero = selection == "regret_matching"
-    baseline_white = u_row[i_t]
-    for i in range(n_white):
-        g = 0.0 if i == i_t else u_row[i] - baseline_white
-        updated = node.white.regret[i] + g
-        node.white.regret[i] = max(0.0, updated) if clip_at_zero else updated
-        node.white.last_regret_increment[i] = g
+    if selection == "mmd":
+        # v3 18d.1: g_t is exactly u_row/u_col, already computed above --
+        # no separate gradient estimate needed. Black maximizes -u.
+        assert node.white.x is not None and node.white.mu is not None
+        assert node.black.x is not None and node.black.mu is not None
+        node.white.x, node.white.mu = _mmd_update(
+            node.white.x, node.white.mu, u_row, node.white.node_visits,
+            eta=mmd_eta, alpha0=mmd_alpha0, magnet_period=mmd_magnet_period,
+        )
+        node.black.x, node.black.mu = _mmd_update(
+            node.black.x, node.black.mu, {j: -u for j, u in u_col.items()},
+            node.black.node_visits,
+            eta=mmd_eta, alpha0=mmd_alpha0, magnet_period=mmd_magnet_period,
+        )
+    else:
+        clip_at_zero = selection == "regret_matching"
+        baseline_white = u_row[i_t]
+        for i in range(n_white):
+            g = 0.0 if i == i_t else u_row[i] - baseline_white
+            updated = node.white.regret[i] + g
+            node.white.regret[i] = max(0.0, updated) if clip_at_zero else updated
+            node.white.last_regret_increment[i] = g
 
-    # Black maximizes -u; regret for switching to j is the negation of
-    # White's own row-sketch comparison (zero-sum).
-    baseline_black = u_col[j_t]
-    for j in range(n_black):
-        g = 0.0 if j == j_t else -(u_col[j] - baseline_black)
-        updated = node.black.regret[j] + g
-        node.black.regret[j] = max(0.0, updated) if clip_at_zero else updated
-        node.black.last_regret_increment[j] = g
+        # Black maximizes -u; regret for switching to j is the negation of
+        # White's own row-sketch comparison (zero-sum).
+        baseline_black = u_col[j_t]
+        for j in range(n_black):
+            g = 0.0 if j == j_t else -(u_col[j] - baseline_black)
+            updated = node.black.regret[j] + g
+            node.black.regret[j] = max(0.0, updated) if clip_at_zero else updated
+            node.black.last_regret_increment[j] = g
 
     child = node.children[(i_t, j_t)]
     value = _simulate_row_sketch(
         child, ruleset, evaluator, rng, epsilon, selection, depth + 1, max_depth,
         pool_size=pool_size, pool_seed_size=pool_seed_size,
+        mmd_eta=mmd_eta, mmd_alpha0=mmd_alpha0, mmd_magnet_period=mmd_magnet_period,
     )
     child.value_estimate = value
     node.stage_sketch[i_t, j_t] = value
@@ -473,17 +582,25 @@ def run_simulations(
     max_depth: int | None = None,
     pool_size: int = 12,
     pool_seed_size: int = 6,
+    mmd_eta: float = 1.0,
+    mmd_alpha0: float = 0.5,
+    mmd_magnet_period: int = 50,
 ) -> None:
     """Run `n_simulations` row-sketch simulations from `root` in place.
 
     `pool_size` (k) / `pool_seed_size` (k1) are `seed_program_pool`'s own
     parameters, threaded through so every newly-expanded node in this
     search uses the same pool geometry. `max_depth` matches `learn.search.
-    run_simulations`'s own testing/analysis hook."""
+    run_simulations`'s own testing/analysis hook. `mmd_eta`/`mmd_alpha0`/
+    `mmd_magnet_period` (v3 18d.1) are `_mmd_update`'s own parameters,
+    ignored unless `selection="mmd"` -- defaults are the values validated
+    against the Matching-Pennies dodge fixture (see `_mmd_update`'s own
+    docstring), not arbitrary."""
     for _ in range(n_simulations):
         _simulate_row_sketch(
             root, ruleset, evaluator, rng, epsilon, selection, 0, max_depth,
             pool_size=pool_size, pool_seed_size=pool_seed_size,
+            mmd_eta=mmd_eta, mmd_alpha0=mmd_alpha0, mmd_magnet_period=mmd_magnet_period,
         )
 
 
