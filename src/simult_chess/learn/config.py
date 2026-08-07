@@ -49,3 +49,12 @@ class SearchConfig:
     # today's exact behaviour by not setting this.
     pool_size: int = 12  # row_sketch's own k -- ignored unless node_solver="row_sketch"
     pool_seed_size: int = 6  # row_sketch's own k1 -- ditto
+    # v3 18d.1/18d.3: row_sketch._mmd_update's own parameters, ignored unless
+    # node_solver="row_sketch" and selection="mmd". Defaults are the values
+    # validated against the Matching-Pennies dodge fixture (row_sketch.
+    # _mmd_update's own docstring). Exposed here (rather than left as
+    # run_simulations' own function defaults) so a caller can vary alpha0
+    # per agent -- e.g. 18d.3's tau-ladder (tau = 1/mmd_alpha0).
+    mmd_eta: float = 1.0
+    mmd_alpha0: float = 0.5
+    mmd_magnet_period: int = 50

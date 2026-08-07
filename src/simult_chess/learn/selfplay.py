@@ -142,6 +142,9 @@ def play_one_selfplay_game(
                 selection=search_config.selection,
                 pool_size=search_config.pool_size,
                 pool_seed_size=search_config.pool_seed_size,
+                mmd_eta=search_config.mmd_eta,
+                mmd_alpha0=search_config.mmd_alpha0,
+                mmd_magnet_period=search_config.mmd_magnet_period,
             )
             readout = row_sketch.read_out(root_rs, evaluator, ruleset)
             assert root_rs.white is not None and root_rs.black is not None

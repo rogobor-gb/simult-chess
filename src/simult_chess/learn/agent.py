@@ -169,6 +169,9 @@ class LearnedAgent:
                 selection=self.search_config.selection,
                 pool_size=self.search_config.pool_size,
                 pool_seed_size=self.search_config.pool_seed_size,
+                mmd_eta=self.search_config.mmd_eta,
+                mmd_alpha0=self.search_config.mmd_alpha0,
+                mmd_magnet_period=self.search_config.mmd_magnet_period,
             )
             readout = row_sketch.read_out(root_rs, self.evaluator, ruleset)
             stats_rs = root_rs.white if color is Color.WHITE else root_rs.black
