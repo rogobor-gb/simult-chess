@@ -30,6 +30,7 @@ import torch
 
 from simult_chess.core.types import Action, Color, Program, State
 from simult_chess.interop.encoding import encode_state
+from simult_chess.learn import row_sketch
 from simult_chess.learn.action_grid import (
     NO_SECOND_INDEX,
     decode_program,
@@ -149,6 +150,35 @@ class LearnedAgent:
     def __call__(
         self, state: State, color: Color, ruleset: RuleSet, rng: random.Random
     ) -> Program:
+        if self.search_config.node_solver == "row_sketch":
+            # v3 18f.1: mirrors selfplay.py's own row-sketch branch -- a
+            # pool entry already *is* a full program, so the played move
+            # is sampled directly from read_out's pool-level policy, no
+            # separate slot-2 step. Needed so a checkpoint trained via
+            # row-sketch self-play is evaluated back through the same
+            # search mechanism it was trained with, not the older slot-1-
+            # only path this class otherwise always used.
+            root_rs = row_sketch.make_root(state)
+            row_sketch.run_simulations(
+                root_rs,
+                ruleset,
+                self.evaluator,
+                self.search_config.simulations,
+                rng,
+                epsilon=self.search_config.epsilon_floor,
+                selection=self.search_config.selection,
+                pool_size=self.search_config.pool_size,
+                pool_seed_size=self.search_config.pool_seed_size,
+            )
+            readout = row_sketch.read_out(root_rs, self.evaluator, ruleset)
+            stats_rs = root_rs.white if color is Color.WHITE else root_rs.black
+            assert stats_rs is not None, "search must expand the root before playing"
+            strategy = (
+                readout.row_strategy if color is Color.WHITE else readout.col_strategy
+            )
+            index = sample_index(dict(enumerate(strategy)), rng)
+            return stats_rs.programs[index]
+
         root = make_root(state)
         run_simulations(
             root,

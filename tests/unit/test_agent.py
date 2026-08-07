@@ -121,3 +121,62 @@ def test_learned_agent_drops_into_play_one_game() -> None:
     )
     assert report.phases_played == 6
     assert report.violations == ()
+
+
+# --- v3 18f.1: node_solver="row_sketch" ---------------------------------
+# Mirrors the four tests above exactly, so a difference in behaviour
+# between the two search paths shows up as a difference in results, not
+# methodology. Needed so a checkpoint trained via row-sketch self-play
+# (SearchConfig.node_solver has existed since 18c wiring, but LearnedAgent
+# ignored it until now) is evaluated back through the same search
+# mechanism it was trained with.
+
+
+def _row_sketch_config(simulations: int = 8) -> SearchConfig:
+    return SearchConfig(
+        simulations=simulations, node_solver="row_sketch", pool_size=8, pool_seed_size=4
+    )
+
+
+def test_learned_agent_row_sketch_produces_legal_programs() -> None:
+    net = _tiny_net()
+    agent = LearnedAgent(net=net, search_config=_row_sketch_config(), device=_CPU)
+    state = standard_starting_state()
+    for seed in range(5):
+        rng = random.Random(seed)
+        program = agent(state, Color.WHITE, RULESET, rng)
+        assert legality.is_legal_program(state, program, Color.WHITE, RULESET)
+        program_b = agent(state, Color.BLACK, RULESET, rng)
+        assert legality.is_legal_program(state, program_b, Color.BLACK, RULESET)
+
+
+def test_learned_agent_row_sketch_is_deterministic_given_the_same_seed() -> None:
+    net = _tiny_net()
+    agent = LearnedAgent(net=net, search_config=_row_sketch_config(), device=_CPU)
+    state = standard_starting_state()
+    program_a = agent(state, Color.WHITE, RULESET, random.Random(7))
+    program_b = agent(state, Color.WHITE, RULESET, random.Random(7))
+    assert program_a == program_b
+
+
+def test_learned_agent_row_sketch_drops_into_play_one_game() -> None:
+    from simult_chess.harness.selfplay import play_one_game
+
+    net_white = _tiny_net()
+    net_black = _tiny_net()
+    agent_white = LearnedAgent(
+        net=net_white, search_config=_row_sketch_config(simulations=4), device=_CPU
+    )
+    agent_black = LearnedAgent(
+        net=net_black, search_config=_row_sketch_config(simulations=4), device=_CPU
+    )
+    report = play_one_game(
+        standard_starting_state(),
+        agent_white,
+        agent_black,
+        RULESET,
+        rng_seed=0,
+        max_phases=6,
+    )
+    assert report.phases_played == 6
+    assert report.violations == ()
