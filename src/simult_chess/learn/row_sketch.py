@@ -668,3 +668,30 @@ def project_slot1_marginal(
         a1_index = encode_action(program[0], state)
         marginal[a1_index] = marginal.get(a1_index, 0.0) + float(mass)
     return marginal
+
+
+def project_slot2_conditional(
+    strategy: FloatArray, programs: tuple[Program, ...], state: State, a1_index: int
+) -> dict[int, float]:
+    """The slot-2 conditional of a pool-level distribution given a
+    specific played slot-1 action -- the other half of the roadmap's own
+    factorisation language ("...factorises into a slot-1 marginal and a
+    slot-2 conditional sigma_bar(a2|a1)"). Sums `strategy[i]` over every
+    pool entry `i` whose *first* action is `a1_index`, keyed by second
+    action grid index (`NO_SECOND_INDEX` for a single-action program),
+    renormalized. `a1_index` is expected to be a value `project_slot1_
+    marginal` on the same `strategy`/`programs` already assigned positive
+    mass to (the caller derives it from the same sampled program) -- the
+    empty-mass fallback below is defensive, not an expected path."""
+    mass: dict[int, float] = {}
+    for program, p in zip(programs, strategy, strict=True):
+        if encode_action(program[0], state) != a1_index:
+            continue
+        a2_index = (
+            encode_action(program[1], state) if len(program) > 1 else NO_SECOND_INDEX
+        )
+        mass[a2_index] = mass.get(a2_index, 0.0) + float(p)
+    total = sum(mass.values())
+    if total <= 0.0:
+        return {NO_SECOND_INDEX: 1.0}
+    return {index: m / total for index, m in mass.items()}
