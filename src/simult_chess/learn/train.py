@@ -63,8 +63,10 @@ def make_optimizer(net: SimultChessNet, config: TrainConfig) -> torch.optim.Opti
     )
 
 
-def _dense_target(target: dict[int, float], device: torch.device) -> torch.Tensor:
-    dense = torch.zeros(SLOT_SIZE, dtype=torch.float32, device=device)
+def _dense_target(
+    target: dict[int, float], size: int, device: torch.device
+) -> torch.Tensor:
+    dense = torch.zeros(size, dtype=torch.float32, device=device)
     for index, prob in target.items():
         dense[index] = prob
     return dense
@@ -80,10 +82,31 @@ def _stack_batch(
         device
     )
     white_slot1_target = torch.stack(
-        [_dense_target(ex.phase.white_slot1_target, device) for ex in examples]
+        [
+            _dense_target(ex.phase.white_slot1_target, SLOT_SIZE, device)
+            for ex in examples
+        ]
     )
     black_slot1_target = torch.stack(
-        [_dense_target(ex.phase.black_slot1_target, device) for ex in examples]
+        [
+            _dense_target(ex.phase.black_slot1_target, SLOT_SIZE, device)
+            for ex in examples
+        ]
+    )
+    # SLOT_SIZE + 1 (== NO_SECOND_INDEX + 1), not SLOT_SIZE: the slot-2
+    # head has one extra class for "no second action" (NO_SECOND_INDEX ==
+    # SLOT_SIZE itself), which slot-1's dense target never needs.
+    white_slot2_target = torch.stack(
+        [
+            _dense_target(ex.phase.white_slot2_target, SLOT_SIZE + 1, device)
+            for ex in examples
+        ]
+    )
+    black_slot2_target = torch.stack(
+        [
+            _dense_target(ex.phase.black_slot2_target, SLOT_SIZE + 1, device)
+            for ex in examples
+        ]
     )
     white_slot1_played = torch.tensor(
         [ex.phase.white_slot1_played for ex in examples], device=device
@@ -103,6 +126,8 @@ def _stack_batch(
         "scalars": scalars,
         "white_slot1_target": white_slot1_target,
         "black_slot1_target": black_slot1_target,
+        "white_slot2_target": white_slot2_target,
+        "black_slot2_target": black_slot2_target,
         "white_slot1_played": white_slot1_played,
         "black_slot1_played": black_slot1_played,
         "white_slot2_played": white_slot2_played,
@@ -141,12 +166,21 @@ def compute_loss(
     black_slot2_logits = net.slot2_logits(
         policy_features, batch["black_slot1_played"], Color.BLACK
     )
-    white_slot2_loss = functional.cross_entropy(
-        white_slot2_logits, batch["white_slot2_played"]
-    )
-    black_slot2_loss = functional.cross_entropy(
-        black_slot2_logits, batch["black_slot2_played"]
-    )
+    # Soft cross-entropy, the same formula slot-1 uses -- not `functional.
+    # cross_entropy` on a hard label. row_sketch's pool carries a genuine
+    # slot-2 conditional now (`white_slot2_target`/`black_slot2_target`,
+    # `PhaseRecord`'s new fields); the older "slot1" node_solver path has
+    # no such statistic and records a one-hot there instead, for which
+    # this formula is mathematically identical to the old hard-label
+    # cross-entropy (`-(onehot_y . log_softmax(logits)).sum() ==
+    # -log_softmax(logits)[y]` by construction) -- one formula for both,
+    # not two loss code paths.
+    white_slot2_loss = -(
+        batch["white_slot2_target"] * functional.log_softmax(white_slot2_logits, dim=1)
+    ).sum(dim=1).mean()
+    black_slot2_loss = -(
+        batch["black_slot2_target"] * functional.log_softmax(black_slot2_logits, dim=1)
+    ).sum(dim=1).mean()
 
     policy_loss = (
         white_slot1_loss + black_slot1_loss + white_slot2_loss + black_slot2_loss

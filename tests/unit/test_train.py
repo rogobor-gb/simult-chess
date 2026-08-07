@@ -78,6 +78,29 @@ def test_compute_loss_is_finite_and_all_components_present() -> None:
         assert metrics[key] >= 0.0 or key == "loss"
 
 
+def test_soft_cross_entropy_on_a_one_hot_target_matches_hard_cross_entropy() -> None:
+    # The exact identity compute_loss's slot-2 formula now depends on: a
+    # one-hot soft target run through the same -(target * log_softmax(
+    # logits)).sum(dim=1).mean() formula slot-1 already used gives
+    # bit-for-bit the same value as the old functional.cross_entropy(
+    # logits, hard_label) it replaced -- the reason the "slot1" node_
+    # solver path's numerics are unchanged by adding real soft targets
+    # for row_sketch's own path.
+    torch.manual_seed(0)
+    logits = torch.randn(5, 10)
+    hard_labels = torch.tensor([2, 7, 0, 9, 4])
+    soft_targets = torch.nn.functional.one_hot(hard_labels, num_classes=10).float()
+
+    hard_loss = torch.nn.functional.cross_entropy(logits, hard_labels)
+    soft_loss = (
+        -(soft_targets * torch.nn.functional.log_softmax(logits, dim=1))
+        .sum(dim=1)
+        .mean()
+    )
+
+    assert torch.allclose(hard_loss, soft_loss, atol=1e-6)
+
+
 def test_train_step_reduces_loss_on_a_fixed_batch() -> None:
     # Not a claim about learning speed -- just that one SGD step on a FIXED
     # batch (no new sampling in between) doesn't increase loss on that same
