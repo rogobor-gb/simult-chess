@@ -68,6 +68,12 @@ def test_selfplay_phase_records_have_valid_targets() -> None:
         assert pytest.approx(sum(phase.black_slot1_target.values()), abs=1e-5) == 1.0
         assert phase.white_slot1_played in phase.white_slot1_target
         assert phase.black_slot1_played in phase.black_slot1_target
+        # No refined slot-2 statistic exists on the "slot1" node_solver
+        # path (learn.search's own module docstring) -- the target must
+        # be the degenerate one-hot on the actually-played index, not an
+        # approximation of a richer one.
+        assert phase.white_slot2_target == {phase.white_slot2_played: 1.0}
+        assert phase.black_slot2_target == {phase.black_slot2_played: 1.0}
 
 
 def test_selfplay_game_is_deterministic_given_the_same_net_weights_and_seed() -> None:
@@ -122,6 +128,8 @@ def test_replay_buffer_maps_outcome_to_z(outcome: str, expected_z: float) -> Non
         scalars=np.zeros(7, dtype=np.float32),
         white_slot1_target={0: 1.0},
         black_slot1_target={0: 1.0},
+        white_slot2_target={-1: 1.0},
+        black_slot2_target={-1: 1.0},
         white_slot1_played=0,
         white_slot2_played=-1,
         black_slot1_played=0,
@@ -144,6 +152,8 @@ def test_replay_buffer_respects_capacity_as_a_ring_buffer() -> None:
             scalars=np.zeros(7, dtype=np.float32),
             white_slot1_target={0: 1.0},
             black_slot1_target={0: 1.0},
+            white_slot2_target={-1: 1.0},
+            black_slot2_target={-1: 1.0},
             white_slot1_played=marker,
             white_slot2_played=-1,
             black_slot1_played=marker,

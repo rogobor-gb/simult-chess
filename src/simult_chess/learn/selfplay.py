@@ -63,12 +63,25 @@ _OUTCOME_VALUE: dict[str, float] = {
 
 @dataclass(frozen=True, slots=True)
 class PhaseRecord:
-    """One phase's training example (pre-phase state, per-colour targets)."""
+    """One phase's training example (pre-phase state, per-colour targets).
+
+    `white_slot2_target`/`black_slot2_target`: a real soft distribution
+    under `node_solver="row_sketch"` (the pool's own slot-2 conditional
+    given the played slot-1, `row_sketch.project_slot2_conditional`) --
+    under the older `"slot1"` path, slot-2 has no independently-refined
+    search statistic (`learn.search`'s own module docstring), so this is
+    the degenerate one-hot `{played: 1.0}`, the honest representation of
+    "nothing richer is known." `white_slot2_played`/`black_slot2_played`
+    (the hard sampled index) are kept alongside, unchanged -- other code
+    and tests already depend on them directly.
+    """
 
     planes: npt.NDArray[np.float32]
     scalars: npt.NDArray[np.float32]
     white_slot1_target: dict[int, float]
     black_slot1_target: dict[int, float]
+    white_slot2_target: dict[int, float]
+    black_slot2_target: dict[int, float]
     white_slot1_played: int
     white_slot2_played: int
     black_slot1_played: int
@@ -155,6 +168,15 @@ def play_one_selfplay_game(
                 if len(program_black) > 1
                 else NO_SECOND_INDEX
             )
+            # The pool already carries real slot-2 information (a pool
+            # entry is a full program) -- a genuine conditional, not the
+            # degenerate one-hot the "slot1" branch below is stuck with.
+            white_slot2_target = row_sketch.project_slot2_conditional(
+                readout.row_strategy, root_rs.white.programs, state, w1
+            )
+            black_slot2_target = row_sketch.project_slot2_conditional(
+                readout.col_strategy, root_rs.black.programs, state, b1
+            )
         else:
             root = make_root(state)
             run_simulations(
@@ -190,6 +212,13 @@ def play_one_selfplay_game(
             program_white = decode_program(first_white, w2, state, Color.WHITE, ruleset)
             program_black = decode_program(first_black, b2, state, Color.BLACK, ruleset)
 
+            # No independently-refined slot-2 statistic exists on this
+            # path (learn.search's own module docstring) -- a one-hot on
+            # the actually-played index is the honest target, not an
+            # approximation of a richer one.
+            white_slot2_target = {w2: 1.0}
+            black_slot2_target = {b2: 1.0}
+
         planes, scalars = encode_state(state, ruleset)
         phases.append(
             PhaseRecord(
@@ -197,6 +226,8 @@ def play_one_selfplay_game(
                 scalars=scalars,
                 white_slot1_target=white_target,
                 black_slot1_target=black_target,
+                white_slot2_target=white_slot2_target,
+                black_slot2_target=black_slot2_target,
                 white_slot1_played=w1,
                 white_slot2_played=w2,
                 black_slot1_played=b1,

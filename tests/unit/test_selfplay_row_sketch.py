@@ -79,6 +79,14 @@ def test_row_sketch_selfplay_phase_records_have_valid_targets() -> None:
         assert pytest.approx(sum(phase.black_slot1_target.values()), abs=1e-5) == 1.0
         assert phase.white_slot1_played in phase.white_slot1_target
         assert phase.black_slot1_played in phase.black_slot1_target
+        # Unlike the "slot1" path, row-sketch's pool carries real slot-2
+        # information -- a genuine conditional (project_slot2_conditional),
+        # not necessarily a one-hot, though it may collapse to one if only
+        # one pool entry shares the played slot-1 action.
+        assert pytest.approx(sum(phase.white_slot2_target.values()), abs=1e-5) == 1.0
+        assert pytest.approx(sum(phase.black_slot2_target.values()), abs=1e-5) == 1.0
+        assert phase.white_slot2_played in phase.white_slot2_target
+        assert phase.black_slot2_played in phase.black_slot2_target
 
 
 def test_row_sketch_selfplay_game_is_deterministic_given_the_same_net_and_seed() -> (
