@@ -308,10 +308,11 @@ def _pool_strategy(
     `seed_program_pool`), so every candidate is already "reasonable" by
     construction -- blending the prior in *again* at the sampling-
     distribution level would be redundant. `sigma` is `rm` (optimistic RM+
-    by default, Hedge/optimistic Hedge, or MMD's current iterate `x` --
-    same `selection` values `search` already exposes, plus `"mmd"`)
-    floored at `epsilon` (v3 18a'.3's guarantee, carried over unchanged:
-    every pool entry visited infinitely often)."""
+    by default, plain RM+/Hedge/optimistic Hedge, or MMD's current iterate
+    `x` -- same `selection` values `search` already exposes, plus
+    `"rm_plus"`/`"mmd"`: the four arms 18d.2 compares) floored at `epsilon`
+    (v3 18a'.3's guarantee, carried over unchanged: every pool entry
+    visited infinitely often)."""
     n = len(stats.programs)
     if selection == "mmd":
         if stats.x is None:
@@ -322,6 +323,8 @@ def _pool_strategy(
         rm = _hedge_distribution(stats, optimistic=False)
     elif selection == "optimistic_hedge":
         rm = _hedge_distribution(stats, optimistic=True)
+    elif selection == "rm_plus":
+        rm = _rm_plus_distribution(stats, optimistic=False)
     else:
         rm = _rm_plus_distribution(stats)
     if epsilon <= 0.0 or not n:
@@ -542,7 +545,7 @@ def _simulate_row_sketch(
             eta=mmd_eta, alpha0=mmd_alpha0, magnet_period=mmd_magnet_period,
         )
     else:
-        clip_at_zero = selection == "regret_matching"
+        clip_at_zero = selection in ("regret_matching", "rm_plus")
         baseline_white = u_row[i_t]
         for i in range(n_white):
             g = 0.0 if i == i_t else u_row[i] - baseline_white

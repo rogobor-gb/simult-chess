@@ -214,13 +214,25 @@ class _RegretStats(Protocol):
     node_visits: int
 
 
-def _rm_plus_distribution(stats: _RegretStats) -> dict[int, float]:
-    """Optimistic RM+ (v3 18a'.4): normalizes `positive(regret +
-    last_regret_increment)`. See `_regret_matching_strategy`'s docstring."""
+def _rm_plus_distribution(
+    stats: _RegretStats, optimistic: bool = True
+) -> dict[int, float]:
+    """RM+ (v3 18a'.4/18d.2): normalizes `positive(regret)`, or, when
+    `optimistic=True` (the default -- unchanged behaviour for every
+    existing caller), `positive(regret + last_regret_increment)`. See
+    `_regret_matching_strategy`'s docstring. `optimistic=False` is plain
+    RM+ (Tammelin 2014), exposed as `row_sketch`'s `selection="rm_plus"`
+    (18d.2's fourth comparison arm, alongside optimistic RM+/Hedge/MMD --
+    `_hedge_distribution` already had this same `optimistic` toggle)."""
     n = len(stats.regret)
-    predicted_regret = {
-        a: r + stats.last_regret_increment.get(a, 0.0) for a, r in stats.regret.items()
-    }
+    predicted_regret = (
+        {
+            a: r + stats.last_regret_increment.get(a, 0.0)
+            for a, r in stats.regret.items()
+        }
+        if optimistic
+        else dict(stats.regret)
+    )
     positive = {a: max(r, 0.0) for a, r in predicted_regret.items()}
     total = sum(positive.values())
     return (
